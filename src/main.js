@@ -65,6 +65,13 @@ async function boot() {
   const ui = createUI(buildUIDeps());
   if (!ui) throw new Error('createUI 未回傳 UI');
   app.ui = ui;
+  try {
+    const uiSettings = (typeof ui.getSettings === 'function' && ui.getSettings()) || {};
+    if (typeof uiSettings.sound === 'boolean') app.settings.sound = uiSettings.sound;
+    if (typeof uiSettings.revealOnBattle === 'boolean') app.settings.reveal = uiSettings.revealOnBattle;
+    if (typeof uiSettings.difficulty === 'string') app.difficulty = uiSettings.difficulty;
+    if (typeof uiSettings.viewHints === 'boolean') app.settings.hints = uiSettings.viewHints;
+  } catch (e) { console.warn('[三軍棋] 讀取 UI 設定失敗', e); }
 
   if (typeof view.setSideColors === 'function') {
     view.setSideColors({
@@ -73,6 +80,24 @@ async function boot() {
     });
   }
   if (typeof view.setSound === 'function') view.setSound(app.settings.sound);
+
+  // 低畫質模式（無頭測試／低階 GPU）：?lowfx=1 或 ?quality=low
+  try {
+    const params = new URLSearchParams(location.search);
+    app.lowfx = params.get('lowfx') === '1' || params.get('quality') === 'low';
+    if (app.lowfx && typeof view.setQuality === 'function') view.setQuality('low');
+    if (app.lowfx) {
+      app.settings.lowfx = true;
+      // 低畫質 / 軟體渲染（無頭測試）用：關閉 bloom、降低像素比、加速動畫
+      try {
+        if (view.stage?.bloomPass) view.stage.bloomPass.enabled = false;
+        if (view.stage?.composer?.setPixelRatio) view.stage.composer.setPixelRatio(0.7);
+        if (view.renderer?.setPixelRatio) view.renderer.setPixelRatio(0.7);
+        if (view.renderer) view.renderer.shadowMap.enabled = false;
+        if (view.fx) view.fx.timeScale = 2.4;
+      } catch (e) { console.warn('[三軍棋] lowfx 設定失敗', e); }
+    }
+  } catch (e) { /* ignore */ }
 
   bindGlobalKeys();
   const loading = $('#loading-screen');
@@ -102,23 +127,20 @@ function showFatalError(err) {
 
 function buildUIDeps() {
   return {
+    playerSide: PLAYER_SIDE,
+    autoHideLoading: true,
+    loadingDelay: 320,
     onStartGame: () => startNewGame(),
-    onOpenRules: () => {},
-    onSettingsChange: (next) => applySettings(next),
-    onDeployPick: (pieceKey) => selectDeployPiece(pieceKey),
-    onDeployAuto: () => autoDeployPlayer(),
-    onDeployReset: () => resetPlayerDeploy(),
-    onDeployStart: () => confirmDeploy(),
-    onAutoDeployAndStart: () => { autoDeployPlayer(); confirmDeploy(); },
+    onMenu: () => showMenu(),
+    onRestart: () => startNewGame(),
     onSurrender: () => surrender(),
-    onRestart: () => { if (confirmDialog('確定要重新開始嗎？')) startNewGame(); },
-    onBackToMenu: () => showMenu(),
-    onPlayAgain: () => startNewGame(),
-    onOpenSettings: () => {},
-    onOpenCodex: () => {},
-    onToggleSound: (on) => applySettings({ ...app.settings, sound: on }),
-    onPickDifficulty: (d) => applySettings({ ...app.settings, difficulty: d }),
-    onCancelSelection: () => clearSelection(),
+    onAutoDeploy: () => autoDeployPlayer(),
+    onResetDeploy: () => resetPlayerDeploy(),
+    onStartBattle: () => confirmDeploy(),
+    onDeployPick: (pieceKey) => selectDeployPiece(pieceKey),
+    onSettingsChange: (next) => applySettings(next),
+    onCancel: () => clearSelection(),
+    onBattleClose: () => {},
   };
 }
 
@@ -141,8 +163,10 @@ function showMenu() {
     if (typeof app.view.clearPieces === 'function') app.view.clearPieces();
   }
   if (app.ui) {
-    app.ui.showScreen('menu');
+    if (typeof app.ui.closeBattle === 'function') app.ui.closeBattle();
+    if (typeof app.ui.closeModals === 'function') app.ui.closeModals();
     if (typeof app.ui.setAiThinking === 'function') app.ui.setAiThinking(false);
+    app.ui.showScreen('menu');
   }
 }
 
@@ -175,9 +199,12 @@ async function startNewGame() {
     }
 
     if (app.ui && typeof app.ui.showScreen === 'function') app.ui.showScreen('setup');
-    if (app.ui && typeof app.ui.setBattle === 'function') app.ui.setBattle(null);
+    if (app.ui && typeof app.ui.closeBattle === 'function') app.ui.closeBattle();
+    if (app.ui && typeof app.ui.clearLog === 'function') app.ui.clearLog();
+    if (app.view && typeof app.view.setInteractive === 'function') app.view.setInteractive(true);
     app.view.setPerspective(PLAYER_SIDE);
     if (typeof app.view.setDeployMode === 'function') app.view.setDeployMode(true, { side: PLAYER_SIDE, placed: [] });
+    if (typeof app.ui.setDeployPanel === 'function') refreshDeployPanel();
     syncDeployView();
     refreshDeployPanel();
     if (app.ui && typeof app.ui.setDeployHint === 'function') {
@@ -223,8 +250,13 @@ function selectDeployPiece(pieceKey) {
   const piece = PIECE_BY_KEY[pieceKey];
   if (!piece) return;
   app.selectedDeployKey = pieceKey;
-  const placed = placedKeyMap();
-  app.view.setSelected(placed.get(pieceKey) ?? null);
+  app.view.setSelected(`${PLAYER_SIDE}:${pieceKey}`);
+  if (typeof app.view.setDeployMode === 'function') {
+    app.view.setDeployMode(true, {
+      side: PLAYER_SIDE,
+      placed: app.playerPlacements.map((p) => p.nodeId),
+    });
+  }
   const spots = validDeployNodesFor(pieceKey);
   app.view.highlightNodes(spots, 'deploy');
   if (app.ui && typeof app.ui.setDeploySelected === 'function') app.ui.setDeploySelected(pieceKey);
@@ -386,8 +418,16 @@ function buildDeployViewState() {
 }
 
 function syncDeployView() {
-  if (!app.view || typeof app.view.sync !== 'function') return;
-  app.view.sync(buildDeployViewState());
+  if (!app.view) return;
+  const st = buildDeployViewState();
+  st.playerSide = PLAYER_SIDE;
+  if (typeof app.view.sync === 'function') app.view.sync(st);
+  if (typeof app.view.setDeployMode === 'function') {
+    app.view.setDeployMode(true, {
+      side: PLAYER_SIDE,
+      placed: app.playerPlacements.map((p) => p.nodeId),
+    });
+  }
 }
 
 function refreshDeployPanel() {
@@ -397,6 +437,8 @@ function refreshDeployPanel() {
     side: PLAYER_SIDE,
     total: PIECES.length,
     placedCount: app.playerPlacements.length,
+    placed: app.playerPlacements.map((p) => ({ pieceKey: p.pieceKey, nodeId: p.nodeId })),
+    canStart: app.playerPlacements.length === PIECES.length,
     pieces: PIECES.map((p) => ({
       key: p.key, name: p.name, short: p.short, branch: p.branch,
       category: p.category, rank: p.rank, deploy: p.deploy, desc: p.desc, art: p.art,
@@ -420,6 +462,7 @@ async function beginPlayLoop() {
   app.busy = false;
   app.selectedUid = null;
   if (app.ui && typeof app.ui.showScreen === 'function') app.ui.showScreen('game');
+  refreshGameView();
   while (app.phase === 'play' && app.game && token === app.loopToken) {
     const view = app.game.getView(PLAYER_SIDE);
     if (view.winner) { handleGameOver(view); return; }
@@ -436,8 +479,12 @@ async function beginPlayLoop() {
 function refreshGameView() {
   if (!app.game) return null;
   const view = app.game.getView(PLAYER_SIDE);
+  view.playerSide = PLAYER_SIDE;
   const view3d = app.view;
   if (view3d && typeof view3d.sync === 'function') view3d.sync(view);
+  if (view3d && typeof view3d.syncIntel === 'function') {
+    try { view3d.syncIntel(view); } catch (e) { console.warn('[三軍棋] syncIntel 失敗', e); }
+  }
   const pub = (app.game.getPublicInfo && app.game.getPublicInfo()) || computePublicInfo(view);
   if (app.ui) {
     if (typeof app.ui.updateHud === 'function') app.ui.updateHud(view, pub);
@@ -460,6 +507,7 @@ function computePublicInfo(view) {
 }
 
 function waitForPlayerAction(token) {
+  refreshGameView();
   app.selectedUid = null;
   app.view.setInteractive(true);
   app.view.clearHighlights();
@@ -484,7 +532,13 @@ function onPiecePick(uid) {
   if (view.sideToMove !== PLAYER_SIDE) return;
   if (!uid) { clearSelection(); return; }
   const piece = (view.pieces || []).find((p) => p.uid === uid);
-  if (!piece || piece.side !== PLAYER_SIDE || !piece.alive) { clearSelection(); return; }
+  if (!piece) { clearSelection(); return; }
+  if (piece.side !== PLAYER_SIDE) {
+    // 點擊敵方棋子時，改以「點擊該格」處理（攻擊）
+    if (piece.nodeId != null) onNodePick(piece.nodeId);
+    return;
+  }
+  if (!piece.alive) { clearSelection(); return; }
   app.selectedUid = uid;
   app.view.setSelected(uid);
   const actions = (app.game.getActionsForPiece && app.game.getActionsForPiece(PLAYER_SIDE, uid)) || [];
@@ -583,6 +637,7 @@ async function performPlayerAction(action) {
 /* ---- AI 回合 ---- */
 
 async function runAITurn(token) {
+  refreshGameView();
   if (app.ui && typeof app.ui.setAiThinking === 'function') app.ui.setAiThinking(true);
   app.view.setInteractive(false);
   await sleep(520);
@@ -609,7 +664,6 @@ async function runAITurn(token) {
         const fallback = legal.find((a) => a.type === 'pass');
         if (fallback) app.game.applyAction(AI_SIDE, fallback);
       } else {
-        logPlayerVisibleEvents(res.events || []);
         await playEvents(res.events || [], { ai: true });
       }
     }
@@ -641,29 +695,41 @@ async function playEvents(events, opts = {}) {
   const battles = events.filter((e) => e.type === 'battle');
   const winEvent = events.find((e) => e.type === 'win');
 
-  for (const ev of events) {
-    if (ev.type === 'battle') uiBattleFromEvent(ev);
-    if (ev.type === 'reveal' || ev.type === 'flagExposed') uiLogEvents([ev]);
-  }
 
   let anim = Promise.resolve();
   try {
     if (app.view && typeof app.view.animateEvents === 'function') {
-      anim = Promise.resolve(app.view.animateEvents(events));
+      if (app.lowfx) {
+        // 低畫質 / 無頭測試：不播放 3D 動畫（軟體渲染下動畫會極慢），
+        // 直接由後續 refreshGameView() 同步棋盤狀態。
+      } else {
+        anim = Promise.resolve(app.view.animateEvents(events));
+      }
     }
   } catch (err) {
     console.warn('[三軍棋] 3D 事件播放失敗', err);
   }
 
-  // UI 戰鬥結算卡（與動畫並行）
+  // UI 戰鬥結算卡（與動畫並行；卡面自動關閉）
   let battleUI = Promise.resolve();
   if (battles.length && app.ui && typeof app.ui.setBattle === 'function') {
     battleUI = (async () => {
-      await sleep(opts.ai ? 620 : 420);
+      await sleep(opts.ai ? 700 : 460);
       for (const b of battles) {
         const info = buildBattleInfo(b);
-        const maybe = app.ui.setBattle(info, () => {});
-        if (maybe && typeof maybe.then === 'function') await maybe;
+        await new Promise((resolve) => {
+          let done = false;
+          const finish = () => { if (!done) { done = true; resolve(); } };
+          try {
+            app.ui.setBattle(info, finish);
+          } catch (e) {
+            console.warn('[三軍棋] 戰鬥結算卡錯誤', e);
+            finish();
+            return;
+          }
+          // 保險：最多等 9 秒
+          setTimeout(finish, 9000);
+        });
       }
     })();
   }
@@ -679,12 +745,21 @@ async function playEvents(events, opts = {}) {
 function buildBattleInfo(ev) {
   const view = app.game.getView(PLAYER_SIDE);
   const byUid = new Map((view.pieces || []).map((p) => [p.uid, p]));
+  const revealMap = new Map((ev.reveal || []).map((r) => [r.uid, r]));
   const atk = byUid.get(ev.attackerUid) || {};
   const def = byUid.get(ev.defenderUid) || {};
-  const pick = (p) => ({
-    uid: p.uid, key: p.key, name: p.name || (PIECE_BY_KEY[p.key] && PIECE_BY_KEY[p.key].name) || '？',
-    branch: p.branch, side: p.side,
-  });
+  const pick = (p) => {
+    const hiddenName = p.side === PLAYER_SIDE ? null : (p.branch === 'navy' ? '敵艦' : p.branch === 'air' ? '敵機' : '敵棋');
+    const revealed = revealMap.get(p.uid);
+    const key = p.key || (revealed && revealed.key) || null;
+    const name = p.name
+      || (key && PIECE_BY_KEY[key] && PIECE_BY_KEY[key].name)
+      || (revealed && revealed.key && PIECE_BY_KEY[revealed.key]?.name)
+      || hiddenName || '？';
+    return {
+      uid: p.uid ?? null, key, name, branch: p.branch, side: p.side,
+    };
+  };
   return {
     outcome: ev.outcome,
     special: ev.special || null,
@@ -693,8 +768,8 @@ function buildBattleInfo(ev) {
     eliminated: (ev.eliminated || []).slice(),
     occupied: !!ev.occupied,
     playerIsAttacker: atk.side === PLAYER_SIDE,
-    hidden: ev.reveal ? false : true,
     reveal: ev.reveal || [],
+    autoCloseMs: ev.outcome === 'FLAG' ? 6500 : 4800,
   };
 }
 
@@ -753,11 +828,15 @@ function logPlayerVisibleEvents(events) {
 /* ============================== 結束 / 投降 / 設定 ============================== */
 
 function handleGameOver(view) {
+  try {
+    if (app.view && typeof app.view.sync === 'function') app.view.sync(view);
+  } catch (e) { /* ignore */ }
   app.phase = 'gameover';
   app.loopToken++;
   app.busy = false;
   if (app.ui && typeof app.ui.setAiThinking === 'function') app.ui.setAiThinking(false);
-  if (app.ui && typeof app.ui.setBattle === 'function') app.ui.setBattle(null);
+  if (app.ui && typeof app.ui.closeBattle === 'function') app.ui.closeBattle();
+  if (app.ui && typeof app.ui.closeModals === 'function') app.ui.closeModals();
   if (app.view) app.view.setInteractive(false);
   const result = {
     winner: view.winner,
@@ -772,22 +851,27 @@ function handleGameOver(view) {
 
 function surrender() {
   if (app.phase !== 'play') return;
-  if (!confirmDialog('確定要投降嗎？')) return;
+  // UI 已內建投降確認對話框
+  try {
+    if (typeof app.game.surrender === 'function') app.game.surrender(PLAYER_SIDE);
+  } catch (e) { console.warn('[三軍棋] 投降處理失敗', e); }
   app.phase = 'gameover';
   app.loopToken++;
-  const fakeView = app.game.getView(PLAYER_SIDE);
-  handleGameOver({ ...fakeView, winner: AI_SIDE, winnerReason: '我方投降' });
+  const view = app.game.getView(PLAYER_SIDE);
+  handleGameOver({ ...view, winner: AI_SIDE, winnerReason: '我方投降' });
 }
 
 function applySettings(next) {
-  app.settings = { ...app.settings, ...next };
+  if (!next || typeof next !== 'object') return;
+  // UI 的設定欄位：sound / revealOnBattle / difficulty / viewHints
+  if (typeof next.sound === 'boolean') app.settings.sound = next.sound;
+  if (typeof next.revealOnBattle === 'boolean') app.settings.reveal = next.revealOnBattle;
+  if (typeof next.viewHints === 'boolean') app.settings.hints = next.viewHints;
   if (typeof next.difficulty === 'string') app.difficulty = next.difficulty;
   if (app.view && typeof app.view.setSound === 'function') app.view.setSound(!!app.settings.sound);
   if (app.game && typeof app.game.setRevealOnBattle === 'function') app.game.setRevealOnBattle(!!app.settings.reveal);
-  if (app.ai && typeof app.ai.setDifficulty === 'function' && next.difficulty) app.ai.setDifficulty(next.difficulty);
-  if (app.ui && typeof app.ui.setSound === 'function') app.ui.setSound(!!app.settings.sound);
-  if (app.ui && typeof app.ui.toast === 'function' && (next.sound !== undefined || next.reveal !== undefined || next.difficulty !== undefined)) {
-    app.ui.toast('設定已更新' + (next.reveal !== undefined && app.game ? '（戰鬥揭露將於下一局完全生效）' : ''), 'info');
+  if (app.ai && typeof app.ai.setDifficulty === 'function' && next.difficulty) {
+    try { app.ai.setDifficulty(next.difficulty); } catch (e) { /* 下一局生效 */ }
   }
   persistSettings();
 }
@@ -811,13 +895,23 @@ function loadSettings() {
 /* ============================== 小工具 ============================== */
 
 function toast(msg, type = 'info') {
-  if (app.ui && typeof app.ui.showToast === 'function') app.ui.showToast(msg, type);
+  const map = { ok: 'success', success: 'success', error: 'danger', danger: 'danger', warn: 'warn', warning: 'warn', info: 'info', battle: 'battle', flag: 'flag' };
+  if (app.ui && typeof app.ui.showToast === 'function') app.ui.showToast(msg, map[type] || 'info');
   else console.log('[toast]', msg);
 }
 
 function confirmDialog(msg) {
-  if (app.ui && typeof app.ui.confirm === 'function') return app.ui.confirm(msg);
-  return window.confirm(msg);
+  if (app.ui && typeof app.ui.confirm === 'function') {
+    return new Promise((resolve) => {
+      app.ui.confirm({
+        title: '確認',
+        message: msg,
+        onConfirm: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+  }
+  return Promise.resolve(window.confirm(msg));
 }
 
 function escapeHtml(s) {
@@ -883,6 +977,49 @@ function exposeDebugApi() {
     },
     snapshot: () => (app.game ? app.game.snapshot() : null),
     getSettings: () => ({ ...app.settings, difficulty: app.difficulty }),
+    /** 目前是否正在等待玩家操作（動畫結束、可點擊） */
+    isPlayerTurn: () => app.phase === 'play' && !!app.playerResolve && !app.busy,
+    isBusy: () => !!app.busy,
+    /** 測試用：直接顯示結算畫面 */
+    debugGameOver: (winner = 'south') => {
+      if (!app.game) return;
+      const v = app.game.getView(PLAYER_SIDE);
+      handleGameOver({ ...v, winner, winnerReason: 'debug' });
+      return true;
+    },
+    /** 測試用：把節點投影成畫面座標（給 Playwright 點擊） */
+    projectNode: (nodeId) => {
+      try {
+        const v = app.view;
+        const world = v.board.nodeWorld ? v.board.nodeWorld(nodeId) : null;
+        if (!world) return null;
+        const THREE = v.three;
+        const vec = new THREE.Vector3(world.x, (world.y || 0) + 0.45, world.z).project(v.camera);
+        const rect = v.renderer.domElement.getBoundingClientRect();
+        return {
+          x: rect.left + ((vec.x + 1) / 2) * rect.width,
+          y: rect.top + ((1 - vec.y) / 2) * rect.height,
+          visible: vec.z < 1,
+        };
+      } catch (e) { return null; }
+    },
+    /** 測試用：把某 uid 的棋子位置投影成畫面座標 */
+    projectPiece: (uid) => {
+      try {
+        const v = app.view;
+        const obj = v.pieces && v.pieces.get ? v.pieces.get(uid) : null;
+        if (!obj) return null;
+        const THREE = v.three;
+        const pos = obj.group.position;
+        const vec = new THREE.Vector3(pos.x, pos.y + 0.4, pos.z).project(v.camera);
+        const rect = v.renderer.domElement.getBoundingClientRect();
+        return {
+          x: rect.left + ((vec.x + 1) / 2) * rect.width,
+          y: rect.top + ((1 - vec.y) / 2) * rect.height,
+          visible: vec.z < 1,
+        };
+      } catch (e) { return null; }
+    },
   };
 }
 

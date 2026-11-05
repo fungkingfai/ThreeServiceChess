@@ -90,22 +90,19 @@ export const G = {
   dodeca: (r) => cached(`dode:${r}`, () => new THREE.DodecahedronGeometry(r)),
   /**
    * 以 Shape 拉伸出的板狀幾何（沿 +z 拉伸，置中於 z 軸）
-   * 用於星形、機翼、船體等特殊輪廓。
+   * 用於星形、機翼等特殊輪廓。Shape 每次不同，故不快取。
    */
   extrude(shape, depth = 0.02, bevel = 0.006) {
-    const key = `ext:${shape.uuid}:${depth}:${bevel}`;
-    return cached(key, () => {
-      const g = new THREE.ExtrudeGeometry(shape, {
-        depth,
-        bevelEnabled: bevel > 0,
-        bevelThickness: bevel,
-        bevelSize: bevel,
-        bevelSegments: 2,
-        curveSegments: 12,
-      });
-      g.translate(0, 0, -depth / 2);
-      return g;
+    const g = new THREE.ExtrudeGeometry(shape, {
+      depth,
+      bevelEnabled: bevel > 0,
+      bevelThickness: bevel,
+      bevelSize: bevel,
+      bevelSegments: 2,
+      curveSegments: 12,
     });
+    g.translate(0, 0, -depth / 2);
+    return g;
   },
 };
 
@@ -823,6 +820,18 @@ export class PartBuilder {
     this.entries.push({ geometry, material, matrix });
     return this;
   }
+  /** 把另一個已建構的 Group（或其 Mesh）合併進來，可套用額外矩陣 */
+  addGroup(group, matrix = null) {
+    group.updateMatrixWorld(true);
+    group.traverse((o) => {
+      if (!o.isMesh) return;
+      const m = matrix
+        ? new THREE.Matrix4().multiplyMatrices(matrix, o.matrixWorld)
+        : o.matrixWorld.clone();
+      this.entries.push({ geometry: o.geometry, material: o.material, matrix: m });
+    });
+    return this;
+  }
   /** 建立合併後的 Group（每個材質一個 Mesh） */
   build({ castShadow = true, receiveShadow = false } = {}) {
     const group = new THREE.Group();
@@ -842,6 +851,39 @@ export class PartBuilder {
     }
     return group;
   }
+}
+
+/** 由位置/旋轉/縮放組合矩陣 */
+export function mat4(pos = [0, 0, 0], rot = [0, 0, 0], scale = 1) {
+  _v.set(pos[0], pos[1], pos[2]);
+  _e.set(rot[0], rot[1], rot[2]);
+  _q.setFromEuler(_e);
+  if (typeof scale === 'number') _s.set(scale, scale, scale);
+  else _s.set(scale[0], scale[1], scale[2]);
+  return new THREE.Matrix4().compose(_v, _q, _s);
+}
+
+const _up = new THREE.Vector3(0, 0, 1);
+/** 在兩點之間放一根樑（圓柱/方塊皆可），回傳矩陣 */
+export function beamMatrix(from, to, roll = 0) {
+  const a = from.isVector3 ? from : new THREE.Vector3(...from);
+  const b = to.isVector3 ? to : new THREE.Vector3(...to);
+  const dir = b.clone().sub(a);
+  const len = dir.length();
+  const mid = a.clone().add(b).multiplyScalar(0.5);
+  const quat = new THREE.Quaternion().setFromUnitVectors(_up.clone().normalize(), dir.normalize());
+  if (roll) {
+    const q2 = new THREE.Quaternion().setFromAxisAngle(dir, roll);
+    quat.premultiply(q2);
+  }
+  return { matrix: new THREE.Matrix4().compose(mid, quat, new THREE.Vector3(1, 1, 1)), length: len };
+}
+
+/** 以樑的方式加入方塊（長度自動對齊兩點） */
+export function addBeam(builder, from, to, w, h, material, roll = 0) {
+  const { matrix, length } = beamMatrix(from, to, roll);
+  builder.addM(G.box(w, h, length), material, matrix);
+  return length;
 }
 
 /** 將一組 {geo, mat, matrix} 合併為單一 Mesh（供效果/裝飾使用） */

@@ -22,6 +22,9 @@ import {
 } from '../core/pieces.js';
 import { COMBAT_MATRIX, COMBAT_NAMES } from './combat-data.js';
 
+// 方便其他 AI 模組直接取用棋子定義
+export { PIECE_BY_KEY } from '../core/pieces.js';
+
 /* ------------------------------------------------------------------ */
 /* 勝負結果代碼                                                        */
 /* ------------------------------------------------------------------ */

@@ -18,23 +18,7 @@
  *
  * 注意：本模組「不會」讀取 game.state，只接受 getView 的結果。
  */
-import {
-  NODE,
-  GATE_NODES,
-  CAMP_NODES,
-  AIRPORT_NODES,
-  ANCHOR_NODES,
-  DEPLOY_ZONES,
-  WALK_ADJ,
-  SEA_ADJ,
-  RAIL_ADJ,
-  LAND_TO_SEA,
-  SEA_TO_LAND,
-  otherSide,
-  gridDistance,
-  isSeaNode,
-  isLandNode,
-} from '../core/board.js';
+import { NODE, GATE_NODES, DEPLOY_ZONES, RAIL_ADJ, otherSide } from '../core/board.js';
 import { createRng } from '../core/rng.js';
 import {
   FULL_ROSTER,
@@ -49,7 +33,6 @@ import {
   valueOf,
   expectedValue,
   battleForecast,
-  OUTCOME,
 } from './combat-rules.js';
 
 const POOL_BY_BRANCH = { army: ARMY_KEYS, navy: NAVY_KEYS, air: AIR_KEYS };
@@ -95,6 +78,7 @@ export class Belief {
     this.enemyUids = new Set();
     this._seenEvents = new Set();
     this._distCache = new Map();
+    this._gateFlagCache = null;
   }
 
   /** 是否可信「從未移動代表仍在部署位置」 */
@@ -114,6 +98,7 @@ export class Belief {
     if (!view) return this;
     this.view = view;
     this._distCache.clear();
+    this._gateFlagCache = null;
 
     const pieces = Array.isArray(view.pieces) ? view.pieces : [];
     const enemyPieces = pieces.filter((p) => p && p.side === this.enemy);
@@ -254,6 +239,8 @@ export class Belief {
       const aUid = uidOf(ev.attackerUid);
       const dUid = uidOf(ev.defenderUid);
       const special = ev.special || 'normal';
+      // 飛越擊落：attackerUid 是被擊落的飛機（受害者），真正的行動者是 defenderUid
+      const intercepted = !!ev.intercepted;
       const outcome = ev.outcome ?? null;
       const elim = Array.isArray(ev.eliminated) ? ev.eliminated : [];
       const reveal = Array.isArray(ev.reveal) ? ev.reveal : [];
@@ -268,12 +255,17 @@ export class Belief {
       if (aUid !== null) {
         const info = this.uidInfo.get(aUid);
         if (info) {
-          info.moved = true; // 攻擊等同有行動能力（至少不是純靜止被動）
-          const act = SPECIAL_TO_ACTION[special];
-          if (act) info.actions.add(act);
-          if (special === 'air') info.modes.add('air');
-          if (special === 'rail') info.modes.add('rail');
-          if (ev.mode) info.modes.add(ev.mode);
+          if (!intercepted) {
+            // 會「移動」的攻擊：一般移動攻擊、鐵路、空襲、兩棲登陸；
+            // 遠距火力（砲擊／砲壘／防空／飛彈）不移動，不可當成移動證據。
+            const movesByAttack = !['fort', 'bombard', 'antiair', 'missile'].includes(special);
+            if (movesByAttack) info.moved = true;
+            const act = SPECIAL_TO_ACTION[special];
+            if (act) info.actions.add(act);
+            if (special === 'air') info.modes.add('air');
+            if (special === 'rail') info.modes.add('rail');
+            if (ev.mode) info.modes.add(ev.mode);
+          }
           info.battles.push({
             role: 'attacker',
             special,
@@ -287,6 +279,10 @@ export class Belief {
       if (dUid !== null) {
         const info = this.uidInfo.get(dUid);
         if (info) {
+          if (intercepted) {
+            // 飛越擊落：開火方（高射炮／炮艦）洩漏了「防空行動能力」
+            info.actions.add('antiair');
+          }
           info.battles.push({
             role: 'defender',
             special,
@@ -367,6 +363,8 @@ export class Belief {
     if (p.key) return [{ key: p.key, weight: 1 }];
 
     const info = this.uidInfo.get(uid) || {};
+    // 事件紀錄已曝光棋種（例如偵察回報）但 view 尚未同步時，也視為已知
+    if (info.knownKey) return [{ key: info.knownKey, weight: 1 }];
     const landed = !!p.landed;
     const branch = this._branchOfPiece(p, info, landed);
     const pool = this.remainingPool();
@@ -382,6 +380,7 @@ export class Belief {
       // 資料異常時回退成均勻分布，確保 AI 不會崩潰
       for (const key of branchPool) candidates.push({ key, weight: 1 });
     }
+    this._applyGateFlagPrior(uid, candidates);
     const entry = { candidates };
     this._distCache.set(uid, entry);
     return candidates;
@@ -442,7 +441,10 @@ export class Belief {
     // ---- (4) 部署位置先驗 ----
     if (!landed && !moved && trust) {
       const zone = DEPLOY_ZONES[this.enemy];
-      if (key === 'fort') {
+      if (key === 'flag') {
+        // 軍旗只能佈在城門且永遠不能移動（真正的機率由 _gateFlagInfo 調整）
+        if (!GATE_NODES[this.enemy].includes(node.id)) return 0;
+      } else if (key === 'fort') {
         if (!zone.coastal.includes(node.id)) return 0;
         w *= 2.4; // 海岸未動的棋，炮壘機率高（它只能佈在海岸且不能動）
       } else if (isStaticKey(key)) {
@@ -450,15 +452,11 @@ export class Belief {
         if (!zone.allLand.includes(node.id)) return 0;
         w *= key === 'mine' || key === 'trap' ? 1.5 : 1;
       }
-      if (key === 'flag') {
-        if (!GATE_NODES[this.enemy].includes(node.id)) return 0;
-        w *= 25; // 城門上未移動的棋幾乎必是軍旗
-      }
     } else {
       // 資訊不完整時用軟性先驗
       if (key === 'fort' && node.coastal && !moved) w *= 1.8;
       if ((key === 'mine' || key === 'trap') && !moved) w *= 1.3;
-      if (key === 'flag') w *= node.kind === 'gate' ? 6 : 0.002;
+      // 軍旗機率由 _gateFlagInfo 統一調整；此處只保留非城門的微量可能（實際上會再歸零）
     }
 
     // 軍旗只能永遠待在城門（規則硬限制；非城門格不可能是軍旗）
@@ -515,6 +513,60 @@ export class Belief {
       }
     }
     return true;
+  }
+
+  /**
+   * 城門「軍旗誘餌」機率模型（Lead 裁決的新規則）：
+   * 三座城門都可佈任何陸軍棋子；軍旗永遠不會移動，因此
+   * 「所有從未移動過的敵方城門棋子」之中「恰好有一枚」是軍旗。
+   * 若這樣子的棋有 k 枚，則每一枚是軍旗的邊際機率為 1/k。
+   * 若 k=1，該枚必為軍旗（其他棋種機率歸零）。
+   */
+  _gateFlagInfo() {
+    if (this._gateFlagCache) return this._gateFlagCache;
+    const uids = new Set();
+    for (const p of this.aliveEnemyPieces()) {
+      if (p.branch !== 'army' || p.landed) continue;
+      const node = NODE[p.nodeId];
+      if (!node || node.kind !== 'gate') continue;
+      const info = this.uidInfo.get(p.uid);
+      if (info && info.moved) continue; // 移動過就不可能是軍旗
+      uids.add(p.uid);
+    }
+    const info = {
+      uids,
+      k: uids.size,
+      flagKnown: this.knownKeys.has('flag') || this.enemyFlagGate !== null,
+    };
+    this._gateFlagCache = info;
+    return info;
+  }
+
+  /**
+   * 套用城門軍旗先驗：調整候選權重使「未移動城門棋是軍旗」的機率 = 1/k。
+   * @param {number} uid
+   * @param {{key:string,weight:number}[]} candidates
+   */
+  _applyGateFlagPrior(uid, candidates) {
+    const info = this._gateFlagInfo();
+    if (!info.uids.has(uid) || info.k <= 0) return;
+    if (info.flagKnown) return; // 軍旗已曝光，剩下的城門棋都是誘餌
+    const flagEntry = candidates.find((c) => c.key === 'flag');
+    if (info.k <= 1) {
+      // 只剩這一枚未移動的城門棋 → 必是軍旗
+      if (!flagEntry) return;
+      candidates.length = 0;
+      candidates.push({ key: 'flag', weight: 1 });
+      return;
+    }
+    const others = candidates.filter((c) => c.key !== 'flag');
+    let othersSum = 0;
+    for (const c of others) othersSum += c.weight;
+    if (othersSum <= 0) return;
+    // 令 flag 權重 wf 滿足 wf/(wf+othersSum) = 1/k  ⇒ wf = othersSum/(k-1)
+    const wf = othersSum / (info.k - 1);
+    if (flagEntry) flagEntry.weight = wf;
+    else candidates.push({ key: 'flag', weight: wf });
   }
 
   /**
@@ -634,22 +686,40 @@ export class Belief {
   }
 
   _looseAssign(unknowns, assignment, used) {
+    // 1) 軍旗：優先分配給「候選包含 flag」的城門棋；
+    //    即使其他約束無解，也要維持「軍旗在城門、且未移動」這個鐵則。
+    if (!this.knownKeys.has('flag')) {
+      const flagCandidates = unknowns.filter(
+        (p) => NODE[p.nodeId]?.kind === 'gate' && !(this.uidInfo.get(p.uid)?.moved),
+      );
+      const target =
+        flagCandidates.find((p) => this.getCandidates(p.uid).some((c) => c.key === 'flag')) ||
+        flagCandidates[0] ||
+        null;
+      if (target) {
+        used.add('flag');
+        assignment.set(target.uid, 'flag');
+      }
+    }
+    // 2) 其餘棋子：先依軍種分池，同軍種池用盡才退化為任意剩餘棋種
     const remaining = new Map();
     for (const key of this.remainingPool()) {
+      if (used.has(key)) continue;
       const b = branchOf(key);
       if (!remaining.has(b)) remaining.set(b, []);
       remaining.get(b).push(key);
     }
     for (const p of unknowns) {
-      const branch = this._branchOfPiece(p, this.uidInfo.get(p.uid) || {}, !!p.landed);
+      if (assignment.has(p.uid)) continue;
+      const info = this.uidInfo.get(p.uid) || {};
+      const branch = this._branchOfPiece(p, info, !!p.landed);
       let pool = remaining.get(branch) || [];
       let key = pool.find((k) => !used.has(k));
       if (!key) {
-        // 各軍種池已用盡：退回全棋種池
-        const all = this.remainingPool().find((k) => !used.has(k));
-        if (!all) return false;
-        key = all;
+        // 同軍種已無可用棋種（異常局面）→ 找任何未使用棋種
+        key = this.remainingPool().find((k) => !used.has(k));
       }
+      if (!key) return false;
       used.add(key);
       assignment.set(p.uid, key);
     }

@@ -80,8 +80,8 @@ export function boardCell(col, row) {
     rail: isRail,
     coastal,
     rear,
-    // 一般棋子可佈陣（陸地、非機場、非城門）
-    deployable: zone !== 'sea' && !isGate && !isAirport,
+    // 陸地節點皆可佈陣（含城門；機場除外）
+    deployable: zone !== 'sea' && !isAirport,
     // 佈陣區（後方三列，一般陸軍）
     rearDeploy: rear && !isGate && !isAirport,
     railH: isRail && [RAIL_ROWS.north, RAIL_ROWS.south].includes(row) && ![RAIL_COLS[0], RAIL_COLS[1]].includes(col),
@@ -108,7 +108,7 @@ export const MAP_LEGEND = [
   { id: 'north', label: '北陸（AI 紅方）', swatch: 'north', desc: 'AI 的領地；最靠近海洋的一列（第 5 列）為北岸。' },
   { id: 'sea', label: '海洋（中央海域）', swatch: 'sea', desc: '海軍航行區；海域節點不含跨海鐵橋站。' },
   { id: 'south', label: '南陸（玩家綠方）', swatch: 'south', desc: '玩家的領地；第 9 列為南岸，炮壘可由此砲擊。' },
-  { id: 'gate', label: '城門（3 座）', swatch: 'gate', desc: '軍旗只能藏在其中一座；被敵棋攻擊即敗北。' },
+  { id: 'gate', label: '城門（3 座）', swatch: 'gate', desc: '三門皆可放陸軍棋子當誘餌；軍旗藏在其中一座，攻破即敗北。空軍不可攻擊或停留。' },
   { id: 'camp', label: '行營（2 座）', swatch: 'camp', desc: '營內棋子不受敵方陸軍攻擊（海軍、空軍、飛彈仍可）。' },
   { id: 'airport', label: '機場（2 座）', swatch: 'airport', desc: '空軍開局位置；飛彈不可攻擊機場。' },
   { id: 'anchor', label: '錨點（5 個）', swatch: 'anchor', desc: '海軍開局位置，一艦一錨點。' },

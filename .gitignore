@@ -1,4 +1,5 @@
 node_modules/
 research/
 dev/shots/*.png
+dev/shots/*.webp
 *.log

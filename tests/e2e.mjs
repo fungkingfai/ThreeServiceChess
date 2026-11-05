@@ -13,7 +13,7 @@ const ROOT = path.resolve(__dirname, '..');
 const OUT = path.join(ROOT, 'dev', 'shots');
 const URL = process.argv.includes('--url')
   ? process.argv[process.argv.indexOf('--url') + 1]
-  : 'http://127.0.0.1:8123/index.html';
+  : 'http://127.0.0.1:8123/index.html?lowfx=1';
 
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -24,7 +24,7 @@ let shotIndex = 0;
 async function shot(page, name) {
   shotIndex++;
   const file = path.join(OUT, `e2e-${String(shotIndex).padStart(2, '0')}-${name}.png`);
-  await page.screenshot({ path: file });
+  await page.screenshot({ path: file, timeout: 180000 });
   console.log('📸', path.relative(ROOT, file));
   return file;
 }
@@ -39,7 +39,7 @@ function assert(cond, msg) {
 }
 
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--enable-webgl', '--ignore-gpu-blocklist'] });
-const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
 
 page.on('console', (msg) => {
   if (msg.type() === 'error') errors.push(msg.text());
@@ -86,19 +86,25 @@ try {
   assert(/回合|輪到|南軍|北軍/.test(battleText), '對戰 HUD 顯示回合/輪次資訊');
 
   // 讓 AI 先動，然後玩家連續行動數步
-  async function waitSouthTurn(timeoutMs = 25000) {
+  async function waitSouthTurn(timeoutMs = 90000) {
     const t0 = Date.now();
     while (Date.now() - t0 < timeoutMs) {
       const st = await page.evaluate(() => {
         const api = window.__SANJUNQI__;
         if (!api.game) return null;
         const v = api.game.getView('south');
-        return { side: v.sideToMove, winner: v.winner, phase: api.phase };
+        return {
+          side: v.sideToMove,
+          winner: v.winner,
+          phase: api.phase,
+          idle: typeof api.isPlayerTurn === 'function' ? api.isPlayerTurn() : null,
+          busy: typeof api.isBusy === 'function' ? api.isBusy() : null,
+        };
       });
       if (!st) return null;
-      if (st.winner) return 'over';
-      if (st.phase === 'play' && st.side === 'south') return 'south';
-      await page.waitForTimeout(400);
+      if (st.winner || st.phase === 'gameover') return 'over';
+      if (st.phase === 'play' && st.side === 'south' && st.idle !== false && !st.busy) return 'south';
+      await page.waitForTimeout(1000);
     }
     return 'timeout';
   }
@@ -130,7 +136,7 @@ try {
       acted++;
       console.log(`  ↳ 玩家行動 #${acted}: ${result.type} -> node ${result.to}`);
     }
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(2500);
     if (i === 1) await shot(page, 'battle-mid');
   }
   assert(acted > 0, '玩家成功執行至少一個合法行動');

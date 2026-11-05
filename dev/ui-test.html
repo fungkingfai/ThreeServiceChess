@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>三軍棋 3D — UI 開發測試</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    /* ------------------------------------------------------------------
+       僅供 UI 開發／截圖用的 CSS 假 3D 場景（正式版由 three.js 呈現）
+       ------------------------------------------------------------------ */
+    .mock-scene {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background:
+        radial-gradient(120% 90% at 50% 0%, #0f1c27 0%, #060b10 58%, #04070a 100%);
+    }
+    .mock-scene__glow {
+      position: absolute;
+      left: 50%;
+      top: 46%;
+      width: 78vw;
+      height: 62vh;
+      transform: translate(-50%, -50%);
+      background: radial-gradient(60% 55% at 50% 50%, rgba(86, 154, 150, 0.2), transparent 70%);
+      filter: blur(20px);
+    }
+    .mock-scene__horizon {
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(180deg, rgba(4, 8, 12, 0.75) 0%, transparent 34%, transparent 72%, rgba(3, 6, 9, 0.85) 100%),
+        radial-gradient(90% 60% at 50% 50%, transparent 40%, rgba(2, 5, 8, 0.65) 100%);
+      pointer-events: none;
+    }
+    .mock-scene__grid {
+      position: absolute;
+      inset: -20%;
+      background-image:
+        linear-gradient(rgba(120, 170, 180, 0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(120, 170, 180, 0.06) 1px, transparent 1px);
+      background-size: 80px 80px;
+      transform: perspective(800px) rotateX(62deg);
+      transform-origin: 50% 60%;
+      -webkit-mask-image: radial-gradient(70% 60% at 50% 50%, #000, transparent 72%);
+      mask-image: radial-gradient(70% 60% at 50% 50%, #000, transparent 72%);
+      opacity: 0.6;
+    }
+    .mock-board {
+      position: absolute;
+      left: 50%;
+      top: 52%;
+      width: min(60vw, 700px);
+      aspect-ratio: 1 / 1;
+      transform: translate(-50%, -50%) rotateX(55deg) rotateZ(-13deg);
+      border-radius: 10px;
+      border: 2px solid rgba(214, 178, 92, 0.28);
+      background:
+        linear-gradient(180deg,
+          rgba(112, 66, 46, 0.7) 0%,
+          rgba(88, 52, 38, 0.66) 36.5%,
+          #133446 37%,
+          #0e2838 49%,
+          #0b2231 60%,
+          #0e2b3a 62.5%,
+          rgba(38, 92, 66, 0.66) 63%,
+          rgba(26, 66, 48, 0.6) 100%);
+      box-shadow:
+        0 70px 140px rgba(0, 0, 0, 0.72),
+        0 0 90px rgba(80, 160, 150, 0.12),
+        inset 0 0 90px rgba(0, 0, 0, 0.55),
+        inset 0 1px 0 rgba(255, 240, 200, 0.18);
+      overflow: hidden;
+    }
+    .mock-board::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(214, 178, 92, 0.16) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(214, 178, 92, 0.16) 1px, transparent 1px);
+      background-size: calc(100% / 13) calc(100% / 13);
+      opacity: 0.5;
+      pointer-events: none;
+    }
+    .mock-board__rail {
+      position: absolute;
+      background: linear-gradient(90deg, transparent, rgba(244, 220, 154, 0.5), transparent);
+      height: 2px;
+      z-index: 2;
+    }
+    .mock-board__rail--n { left: 0; right: 0; top: 19.2%; }
+    .mock-board__rail--s { left: 0; right: 0; top: 80.7%; }
+    .mock-token {
+      position: absolute;
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      background: currentColor;
+      box-shadow: 0 0 12px currentColor, 0 2px 4px rgba(0, 0, 0, 0.8);
+      z-index: 3;
+    }
+    .mock-token--gold { color: #e6c87a; }
+    .mock-token--green { color: #6fc292; }
+    .mock-token--red { color: #d96b52; }
+    .mock-token--big { width: 26px; height: 26px; opacity: 0.9; }
+    .mock-token__ring {
+      position: absolute;
+      inset: -9px;
+      border-radius: 50%;
+      border: 1px solid currentColor;
+      opacity: 0.35;
+      animation: mock-ring 3.4s ease-in-out infinite;
+    }
+    @keyframes mock-ring {
+      0%, 100% { transform: scale(1); opacity: 0.32; }
+      50% { transform: scale(1.35); opacity: 0.1; }
+    }
+    .devbar {
+      position: fixed;
+      left: 50%;
+      bottom: 12px;
+      transform: translateX(-50%);
+      z-index: 999;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: center;
+      padding: 8px;
+      max-width: 94vw;
+      border-radius: 12px;
+      border: 1px solid rgba(214, 178, 92, 0.25);
+      background: rgba(6, 11, 16, 0.94);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+      font-family: var(--font-sans);
+    }
+    .devbar[hidden] { display: none; }
+    .devbar button {
+      padding: 5px 10px;
+      border-radius: 7px;
+      border: 1px solid rgba(214, 178, 92, 0.22);
+      background: rgba(255, 255, 255, 0.04);
+      color: #cfc7b4;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .devbar button:hover { background: rgba(214, 178, 92, 0.14); color: #f4dc9a; }
+    .devbar button.is-active { background: rgba(214, 178, 92, 0.2); color: #f4dc9a; border-color: rgba(214, 178, 92, 0.5); }
+    .devbar__label { font-size: 10px; color: #776f61; align-self: center; padding: 0 4px; letter-spacing: 0.08em; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="canvas-container" aria-hidden="true">
+      <div class="mock-scene">
+        <div class="mock-scene__glow"></div>
+        <div class="mock-scene__grid"></div>
+        <div class="mock-board" id="mock-board">
+          <div class="mock-board__rail mock-board__rail--n"></div>
+          <div class="mock-board__rail mock-board__rail--s"></div>
+        </div>
+        <div class="mock-scene__horizon"></div>
+      </div>
+    </div>
+    <div id="ui-root"></div>
+    <div id="loading-screen">
+      <div class="loading-inner">
+        <div class="loading-badge">三軍棋</div>
+        <div class="loading-text">正在集結三軍……</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="devbar" id="devbar" hidden>
+    <span class="devbar__label">UI 測試</span>
+    <button data-scene="menu">主選單</button>
+    <button data-scene="setup">佈陣</button>
+    <button data-scene="game">對戰 HUD</button>
+    <button data-scene="game-ai">AI 思考</button>
+    <button data-scene="battle">戰鬥卡</button>
+    <button data-scene="battle-flag">奪旗</button>
+    <button data-scene="rules">規則</button>
+    <button data-scene="codex">圖鑑</button>
+    <button data-scene="settings">設定</button>
+    <button data-scene="gameover">結算</button>
+    <button data-scene="toast">Toast</button>
+  </div>
+
+  <script type="module">
+    import { createUI } from '../src/ui/index.js';
+    import { PIECES } from '../src/core/pieces.js';
+
+    /* ==============================================================
+       CSS 假場景：棋盤上的棋子光點（僅開發用）
+       ============================================================== */
+    const board = document.getElementById('mock-board');
+    const TOKENS = [
+      // 北軍（紅）
+      [3, 1, 'red'], [5, 2, 'red'], [7, 1, 'red'], [9, 2, 'red'], [1, 3, 'red'],
+      [4, 0, 'red'], [8, 3, 'red'], [11, 1, 'red'], [6, 3, 'red'],
+      // 海軍錨點
+      [2, 4.1, 'red', 'big'], [6, 4.1, 'red', 'big'], [10, 4.1, 'red', 'big'],
+      [2, 8.9, 'green', 'big'], [6, 8.9, 'green', 'big'], [10, 8.9, 'green', 'big'],
+      // 南軍（綠）
+      [3, 11, 'green'], [5, 10, 'green'], [7, 11, 'green'], [9, 10, 'green'], [11, 11, 'green'],
+      [4, 12, 'green'], [8, 9, 'green'], [11, 9, 'green'], [6, 12, 'green'],
+      // 金色：城門／重要據點
+      [2, 0, 'gold'], [6, 0, 'gold'], [10, 0, 'gold'],
+      [2, 12, 'gold'], [6, 12, 'gold'], [10, 12, 'gold'],
+    ];
+    TOKENS.forEach(([c, r, color, size]) => {
+      const token = document.createElement('span');
+      token.className = `mock-token mock-token--${color}${size === 'big' ? ' mock-token--big' : ''}`;
+      token.style.left = `${((c + 0.5) / 13) * 100}%`;
+      token.style.top = `${((r + 0.5) / 13) * 100}%`;
+      if (color === 'gold' && r === 12) token.innerHTML = '<span class="mock-token__ring"></span>';
+      board.append(token);
+    });
+
+    /* ==============================================================
+       Mock 資料
+       ============================================================== */
+    const DEAD = {
+      south: ['infantry', 'engineer', 'cannon'],
+      north: ['company', 'scout', 'gunboat'],
+    };
+
+    function buildPieces() {
+      let uid = 1;
+      const list = [];
+      for (const side of ['south', 'north']) {
+        for (const piece of PIECES) {
+          const dead = DEAD[side].includes(piece.key);
+          list.push({
+            uid: side === 'south' ? uid : 100 + uid,
+            side,
+            key: piece.key,
+            name: piece.name,
+            branch: piece.branch,
+            category: piece.category,
+            nodeId: Math.floor(Math.random() * 169),
+            alive: !dead,
+            revealed: side === 'south' || piece.branch === 'air' || dead,
+            landed: false,
+          });
+          uid += 1;
+        }
+      }
+      return list;
+    }
+
+    const MOCK_LOGS = [
+      { type: 'system', text: '佈陣完成，北軍先行。', turn: 1 },
+      { type: 'move', text: '北軍 步兵 沿鐵路移動至 K3 站。', turn: 2, side: 'north' },
+      { type: 'battle', text: '南軍 團長 攻擊 北軍 連長：攻擊方勝，佔領該格。', turn: 4, side: 'south', outcome: 'A' },
+      { type: 'reveal', text: '北軍 偵察機 偵察到南軍 炮壘（海岸 G9）。', turn: 6, side: 'north' },
+      { type: 'kill', text: '北軍 炮艦 砲擊南軍 大炮：防守方勝，炮艦被擊沉。', turn: 8, side: 'south', outcome: 'D' },
+      { type: 'battle', text: '南軍 戰鬥機 對北軍 偵察機：攻擊方勝，敵機擊落。', turn: 10, side: 'south', outcome: 'A' },
+      { type: 'reveal', text: '北軍 總司令 陣亡！北軍軍旗城門位置曝光。', turn: 11, side: 'north' },
+      { type: 'move', text: '南軍 主力艦 兩棲登陸 E9 海岸，登陸成功。', turn: 12, side: 'south' },
+      { type: 'battle', text: '南軍 工兵 拆除 北軍 炮壘：工兵勝（數位版覆寫）。', turn: 12, side: 'south', outcome: 'A' },
+    ];
+
+    function makeView(options = {}) {
+      return {
+        phase: 'play',
+        turn: options.turn ?? 12,
+        sideToMove: options.sideToMove ?? 'south',
+        winner: null,
+        winnerReason: null,
+        flagRevealed: { north: true, south: false },
+        pieces: buildPieces(),
+        log: options.log ? MOCK_LOGS : [],
+        lastEvent: null,
+        deploy: { north: true, south: true },
+      };
+    }
+
+    function pieceKeyByUid(view, uid) {
+      return view.pieces.find((p) => p.uid === uid)?.key || null;
+    }
+
+    /* ==============================================================
+       createUI
+       ============================================================== */
+    const ui = createUI({
+      playerSide: 'south',
+      onStartGame: () => setScene('setup'),
+      onMenu: () => setScene('menu'),
+      onRestart: () => setScene('setup'),
+      onSurrender: () => setScene('gameover'),
+      onAutoDeploy: () => ui.showToast('已自動佈陣：系統會三門全放（軍旗＋誘餌）。', 'success'),
+      onResetDeploy: () => ui.showToast('已清空佈陣，重新開始。', 'info'),
+      onStartBattle: () => setScene('game'),
+      onDeployPick: (key) => {
+        const piece = PIECES.find((p) => p.key === key);
+        ui.setDeployHint(`已選擇「${piece?.name ?? key}」——點擊棋盤上的合法位置放置。`);
+      },
+      onSettingsChange: (settings, key) => {
+        if (key === 'sound') ui.showToast(`音效已${settings.sound ? '開啟' : '關閉'}。`, 'info');
+        if (key === 'difficulty') ui.showToast(`AI 難度已設為${settings.difficulty}。`, 'info');
+      },
+      onCancel: () => ui.setSelectedPiece(null),
+      onRulesClose: () => {},
+    });
+
+    /* ==============================================================
+       場景
+       ============================================================== */
+    let currentView = null;
+
+    function sceneMenu() {
+      ui.showScreen('menu');
+    }
+
+    function sceneSetup() {
+      ui.showScreen('setup');
+      const placedKeys = [
+        'commander', 'army_group', 'corps', 'division', 'brigade',
+        'engineer', 'mine', 'trap', 'fort', 'gas',
+        'battleship', 'cruiser', 'fighter', 'flag',
+      ];
+      ui.setDeployPanel({
+        placed: placedKeys.map((pieceKey) => ({ pieceKey })),
+        side: 'south',
+        selectedKey: 'battleship',
+        onPick: (key) => {
+          const piece = PIECES.find((p) => p.key === key);
+          ui.setDeployHint(`已選擇「${piece?.name ?? key}」——點擊棋盤上的合法位置放置。`);
+        },
+        onAuto: () => ui.showToast('已自動佈陣：系統會三門全放（軍旗＋誘餌）。', 'success'),
+        onReset: () => ui.showToast('已清空佈陣，重新開始。', 'info'),
+        onStart: () => setScene('game'),
+      });
+      ui.setDeployHint('城門可放任何陸軍棋子（軍旗＋誘餌）；軍旗限城門。建議三門都放棋。');
+    }
+
+    function sceneGame(options = {}) {
+      ui.showScreen('game');
+      currentView = makeView(options);
+      ui.updateHud(currentView);
+      ui.setSelectedPiece(options.select === false ? null : { key: 'commander', side: 'south' });
+      ui.setBoardHint('點擊發光的落點移動・紅色光點＝可攻擊・Esc 取消選取', 'info');
+      if (options.aiThinking) ui.setAiThinking(true);
+      if (options.toast) ui.showToast(options.toast, options.toastType || 'flag', { title: '情報更新' });
+    }
+
+    function sceneBattle(variant = 'normal') {
+      const view = makeView({ turn: 12 });
+      currentView = view;
+      ui.showScreen('game');
+      ui.updateHud(view);
+      const southPiece = (key) => view.pieces.find((p) => p.side === 'south' && p.key === key);
+      const northPiece = (key) => view.pieces.find((p) => p.side === 'north' && p.key === key);
+      if (variant === 'flag') {
+        const atk = southPiece('infantry');
+        const def = northPiece('flag');
+        ui.setBattle({
+          type: 'battle',
+          attackerUid: atk.uid,
+          defenderUid: def.uid,
+          outcome: 'FLAG',
+          reveal: [{ uid: atk.uid, key: atk.key }, { uid: def.uid, key: def.key }],
+          eliminated: [def.uid],
+          occupied: true,
+          special: null,
+          turn: 12,
+        }, () => ui.showToast('奪旗成功！', 'flag'));
+      } else {
+        const atk = southPiece('battleship');
+        const def = northPiece('brigade');
+        ui.setBattle({
+          type: 'battle',
+          attackerUid: atk.uid,
+          defenderUid: def.uid,
+          outcome: 'A',
+          reveal: [{ uid: atk.uid, key: atk.key }, { uid: def.uid, key: def.key }],
+          eliminated: [def.uid],
+          occupied: true,
+          special: 'landing',
+          turn: 12,
+        }, () => ui.showToast('登陸成功，部隊已上岸。', 'success'));
+      }
+      ui.setAiThinking(false);
+    }
+
+    function sceneRules(chapter = '') {
+      ui.showScreen('menu');
+      ui.openRules(chapter);
+    }
+
+    function sceneCodex() {
+      ui.showScreen('menu');
+      ui.openCodex('battleship');
+    }
+
+    function sceneSettings() {
+      ui.showScreen('menu');
+      ui.openSettings();
+    }
+
+    function sceneGameover() {
+      ui.showScreen('game');
+      ui.updateHud(makeView({ turn: 24 }));
+      ui.showGameOver({
+        winner: 'south',
+        winnerReason: 'flag',
+        turn: 24,
+        stats: { turn: 24, playerAlive: 9, enemyAlive: 2, kills: 28, playerDead: 21 },
+      });
+    }
+
+    function sceneGameDrawer() {
+      sceneGame({ log: true });
+      setTimeout(() => {
+        document.querySelector('[data-hud="drawer-left"]')?.click();
+      }, 120);
+    }
+
+    function sceneBattleMobile() {
+      sceneBattle('normal');
+    }
+
+    function sceneToast() {
+      sceneGame({ log: true });
+      ui.showToast('北軍總司令已陣亡——敵方軍旗城門位置曝光！', 'flag', { title: '情報更新' });
+      ui.showToast('已選取「主力艦」：點擊海岸可執行兩棲登陸。', 'info');
+    }
+
+    const SCENES = {
+      menu: sceneMenu,
+      setup: sceneSetup,
+      game: () => sceneGame({ log: true }),
+      'game-ai': () => sceneGame({ log: true, sideToMove: 'north', aiThinking: true }),
+      'game-drawer': sceneGameDrawer,
+      battle: () => sceneBattle('normal'),
+      'battle-flag': () => sceneBattle('flag'),
+      rules: () => sceneRules(),
+      'rules-board': () => sceneRules('board'),
+      'rules-pieces': () => sceneRules('pieces'),
+      'rules-combat': () => sceneRules('table'),
+      'rules-matrix': () => {
+        sceneRules('table');
+        setTimeout(() => {
+          const details = document.querySelector('.rule-details');
+          if (details) details.open = true;
+          const matrix = document.querySelector('[data-widget="combat-matrix"]');
+          const content = matrix?.closest('.rules-content');
+          if (matrix && content) content.scrollTop = Math.max(0, matrix.offsetTop - 16);
+        }, 800);
+      },
+      codex: sceneCodex,
+      settings: sceneSettings,
+      gameover: sceneGameover,
+      toast: sceneToast,
+    };
+
+    function setScene(name) {
+      const fn = SCENES[name] || SCENES.menu;
+      ui.closeModals();
+      fn();
+      document.querySelectorAll('.devbar button').forEach((btn) => {
+        btn.classList.toggle('is-active', btn.dataset.scene === name);
+      });
+      document.title = `三軍棋 UI 測試 — ${name}`;
+    }
+
+    // 開發工具列（預設隱藏，按 D 或 ?debug 顯示）
+    const devbar = document.getElementById('devbar');
+    const showDevbar = new URLSearchParams(location.search).has('debug');
+    devbar.hidden = !showDevbar;
+    devbar.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-scene]');
+      if (!btn) return;
+      setScene(btn.dataset.scene);
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'd' || event.key === 'D') devbar.hidden = !devbar.hidden;
+    });
+
+    // 等版面完成再套用場景
+    const scene = (location.hash || '#menu').replace('#', '') || 'menu';
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setScene(scene);
+        window.__uiTest = { ui, scene, ready: true };
+      });
+    });
+
+    window.addEventListener('hashchange', () => {
+      setScene((location.hash || '#menu').replace('#', ''));
+    });
+
+    // 錯誤集中顯示在 console（供 playwright 檢查）
+    window.addEventListener('error', (event) => {
+      console.error('[ui-test] window error:', event.message);
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      console.error('[ui-test] unhandled rejection:', event.reason);
+    });
+  </script>
+</body>
+</html>

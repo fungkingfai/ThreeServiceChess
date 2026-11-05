@@ -286,7 +286,9 @@ function buildDeployZones() {
     for (let row = r0; row <= r1; row++) {
       for (let col = 0; col < COLS; col++) {
         const n = nodeAt(col, row);
-        if (n.kind === 'airport' || n.kind === 'gate') continue;
+        if (n.kind === 'airport') continue;
+        // 城門也可佈置任何陸軍棋子（作為軍旗誘餌），故納入 allLand；
+        // 但仍有獨立的 gates 清單供「軍旗」使用。
         anyLand.push(n.id);
         if (row === r0 || row === r1) land.push(n.id);
         if (n.coastal) coastal.push(n.id);

@@ -48,9 +48,9 @@ export const MOVE_META = {
 };
 
 export const DEPLOY_META = {
-  anyLand: { key: 'anyLand', label: '本方陸地兵站', short: '陸地' },
+  anyLand: { key: 'anyLand', label: '本方陸地兵站（含城門）', short: '陸地' },
   coastal: { key: 'coastal', label: '本方海岸列（炮壘）', short: '海岸' },
-  gate: { key: 'gate', label: '本方三座城門之一（軍旗）', short: '城門' },
+  gate: { key: 'gate', label: '城門（軍旗限此；其餘陸軍棋子可當誘餌）', short: '城門' },
   anchor: { key: 'anchor', label: '本方五個錨點之一（海軍）', short: '錨點' },
   airport: { key: 'airport', label: '本方兩座機場之一（空軍）', short: '機場' },
 };
@@ -431,6 +431,8 @@ export const HOUSE_RULES = [
   { id: 'flag', title: '軍旗即勝', text: '軍旗被任何敵棋攻擊即直接勝利（含同歸於盡的攻方）；飛彈不可攻擊城門，故不能直接轟擊軍旗。' },
   { id: 'camp', title: '行營保護', text: '敵方陸軍不得攻擊行營內的棋子；海軍砲擊、空軍與飛彈不受此限。' },
   { id: 'no-x', title: '不產生無效行動', text: '原勝負表中「無法作用（X）」的組合，引擎不會產生對應的合法行動。' },
+  { id: 'gate-decoy', title: '城門誘餌', text: '三座城門都可以放置陸軍棋子（軍旗、官兵、可移動武器、地雷、陷阱皆可，一門一格）；軍旗仍只能藏在三門之一，敵方必須攻破城門才能確定。' },
+  { id: 'air-gate', title: '空軍與城門', text: '空軍不可攻擊或停留在城門節點（可飛越）；偵察機仍可偵察城門上的棋子。' },
 ];
 
 /* ------------------------------------------------------------------ */

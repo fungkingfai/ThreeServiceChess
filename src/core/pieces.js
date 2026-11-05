@@ -114,7 +114,7 @@ export const PIECES = [
   },
   {
     key: 'gas', name: '毒氣', short: '毒氣', branch: BRANCH.ARMY, category: 'weapon',
-    rank: 0, move: 'land', deploy: 'anyLand', tags: ['gas'],
+    rank: 0, move: 'land', deploy: 'anyLand', tags: ['gas', 'railway'],
     desc: '可移動。勝所有官兵（工兵除外），敗於工兵及所有其他武器。',
     art: 'gas',
   },

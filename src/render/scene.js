@@ -83,7 +83,7 @@ export function createStage(container) {
   renderer.setSize(container.clientWidth || 1280, container.clientHeight || 800);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.02;
+  renderer.toneMappingExposure = 0.92;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.domElement.style.display = 'block';
@@ -112,7 +112,7 @@ export function createStage(container) {
   controls.enableDamping = true;
   controls.dampingFactor = 0.075;
   controls.minDistance = 7.5;
-  controls.maxDistance = 34;
+  controls.maxDistance = 60;
   controls.minPolarAngle = 0.16;
   controls.maxPolarAngle = 1.34;
   controls.enablePan = true;
@@ -137,10 +137,10 @@ export function createStage(container) {
   scene.add(sky);
 
   /* ---------------- 燈光 ---------------- */
-  const hemi = new THREE.HemisphereLight(0xa9c6ff, 0x3a2a1a, 0.62);
+  const hemi = new THREE.HemisphereLight(0xa9c6ff, 0x3a2a1a, 0.48);
   scene.add(hemi);
 
-  const keyLight = new THREE.DirectionalLight(0xffe1b2, 2.7);
+  const keyLight = new THREE.DirectionalLight(0xffe1b2, 2.15);
   keyLight.position.set(7.5, 16, 9.5);
   keyLight.castShadow = true;
   keyLight.shadow.mapSize.set(2048, 2048);
@@ -156,19 +156,19 @@ export function createStage(container) {
   keyLight.target.position.set(0, 0, 0);
   scene.add(keyLight, keyLight.target);
 
-  const fillLight = new THREE.DirectionalLight(0x6fa8ff, 0.85);
+  const fillLight = new THREE.DirectionalLight(0x6fa8ff, 0.7);
   fillLight.position.set(-9, 8.5, -7);
   scene.add(fillLight);
 
-  const warmFill = new THREE.PointLight(0xffb570, 26, 30, 2);
+  const warmFill = new THREE.PointLight(0xffb570, 18, 30, 2);
   warmFill.position.set(-1.5, 5.5, 12.5);
   scene.add(warmFill);
 
-  const northRim = new THREE.PointLight(0x79c9ff, 18, 26, 2);
+  const northRim = new THREE.PointLight(0x79c9ff, 13, 26, 2);
   northRim.position.set(2.5, 5, -12);
   scene.add(northRim);
 
-  const centerGlow = new THREE.PointLight(0xffd9a0, 10, 16, 2);
+  const centerGlow = new THREE.PointLight(0xffd9a0, 7, 16, 2);
   centerGlow.position.set(0, 6.5, 0);
   scene.add(centerGlow);
 
@@ -226,7 +226,7 @@ export function createStage(container) {
   panel(new THREE.Color(0.45, 1.0, 2.2), 20, 9, [-11, 6, -8], [0, 0, 0]); // 冷色補光
   panel(new THREE.Color(0.9, 0.55, 0.28), 8, 16, [12, 5, 5], [0, 0, 0]); // 側面暖光
   panel(new THREE.Color(0.05, 0.06, 0.1), 60, 60, [0, -12, 0], [0, 0, 0]); // 暗地面
-  const envRT = pmrem.fromScene(envScene, 0.55);
+  const envRT = pmrem.fromScene(envScene, 0.04);
   scene.environment = envRT.texture;
   scene.environmentIntensity = 0.8;
   pmrem.dispose();
@@ -253,7 +253,7 @@ export function createStage(container) {
   const renderPass = new RenderPass(scene, camera);
   composer.addPass(renderPass);
 
-  const bloomPass = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.62, 0.72, 0.82);
+  const bloomPass = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.52, 0.68, 0.84);
   composer.addPass(bloomPass);
 
   const outputPass = new OutputPass();
@@ -280,6 +280,11 @@ export function createStage(container) {
     });
   }
 
+  /** 取消進行中的相機飛行（立即停在目前位置） */
+  function cancelFly() {
+    for (const tw of flyTweens.splice(0)) tw.resolve?.();
+  }
+
   function shake(intensity = 0.2, duration = 0.5) {
     shakeAmp = Math.max(shakeAmp, intensity);
     shakeDur = Math.max(shakeDur, duration);
@@ -301,6 +306,7 @@ export function createStage(container) {
   }
 
   let elapsed = 0;
+  let composerEnabled = true;
   const shakeOffset = new THREE.Vector3();
 
   function render(dt) {
@@ -333,13 +339,26 @@ export function createStage(container) {
     }
 
     skyMat.uniforms.uTime.value = elapsed;
-    composer.render(dt);
+    if (composerEnabled) composer.render(dt);
+    else renderer.render(scene, camera);
   }
 
   function setSize(w, h) {
     if (w <= 0 || h <= 0) return;
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    renderer.setSize(w, h);
+    composer.setSize(w, h);
+    bloomPass.resolution.set(w, h);
+  }
+
+  /** 調整像素比（低畫質模式用） */
+  function setPixelRatio(ratio) {
+    const r = Math.max(0.35, Math.min(2, ratio));
+    renderer.setPixelRatio(r);
+    composer.setPixelRatio(r);
+    const w = renderer.domElement.clientWidth || Math.max(2, container.clientWidth || 1280);
+    const h = renderer.domElement.clientHeight || Math.max(2, container.clientHeight || 800);
     renderer.setSize(w, h);
     composer.setSize(w, h);
     bloomPass.resolution.set(w, h);
@@ -375,6 +394,7 @@ export function createStage(container) {
     keyLight,
     sky,
     flyTo,
+    cancelFly,
     shake,
     updateCameraTweens,
     render,
@@ -382,6 +402,20 @@ export function createStage(container) {
     dispose,
     get elapsed() {
       return elapsed;
+    },
+    get composerEnabled() {
+      return composerEnabled;
+    },
+    setComposerEnabled(on) {
+      composerEnabled = !!on;
+    },
+    setPixelRatio,
+    setBloomEnabled(on) {
+      bloomPass.enabled = !!on;
+    },
+    setShadowsEnabled(on) {
+      renderer.shadowMap.enabled = !!on;
+      keyLight.castShadow = !!on;
     },
     setBloom(strength, radius, threshold) {
       bloomPass.strength = strength;

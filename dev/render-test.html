@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>三軍棋 3D — 渲染驗收頁</title>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #07080c; }
+    #canvas-container { position: fixed; inset: 0; }
+    canvas { display: block; }
+    #debug {
+      position: fixed; left: 14px; bottom: 14px; z-index: 10;
+      display: flex; flex-wrap: wrap; gap: 6px; max-width: 640px;
+      font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif;
+    }
+    #debug button {
+      background: rgba(16, 22, 32, 0.82); color: #e8dcc0; border: 1px solid rgba(220, 180, 90, 0.45);
+      border-radius: 7px; padding: 6px 11px; font-size: 12px; cursor: pointer; letter-spacing: 0.5px;
+      backdrop-filter: blur(4px);
+    }
+    #debug button:hover { border-color: #e8c060; color: #ffe9b0; }
+    #hint {
+      position: fixed; right: 14px; bottom: 14px; z-index: 10; color: rgba(230, 220, 190, 0.55);
+      font: 12px/1.5 system-ui, "Noto Sans TC", sans-serif; text-align: right;
+    }
+    body.no-ui #debug, body.no-ui #hint { display: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "../vendor/three/three.module.js",
+        "three/addons/": "../vendor/three/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="canvas-container"></div>
+  <div id="debug"></div>
+  <div id="hint">三軍棋 3D 渲染驗收頁<br />滑鼠拖曳旋轉・滾輪縮放</div>
+
+  <script type="module">
+    import { createView } from '../src/render/index.js';
+    import * as BOARD from '../src/core/board.js';
+    import PIECES, { BRANCH } from '../src/core/pieces.js';
+    import * as THREE from 'three';
+
+    // 除錯：攔截非 Object3D 的 add，印出呼叫堆疊
+    {
+      const origAdd = THREE.Object3D.prototype.add;
+      THREE.Object3D.prototype.add = function (...objs) {
+        for (const o of objs) {
+          if (!(o instanceof THREE.Object3D)) {
+            console.error('[BAD ADD]', String(o), new Error('bad add').stack);
+          }
+        }
+        return origAdd.apply(this, objs);
+      };
+      const origErr = console.error.bind(console);
+      let seenCount = 0;
+      console.error = function (...args) {
+        const text = args.map(String).join(' ');
+        if (text.includes('Object3D.add') && seenCount < 4) {
+          seenCount += 1;
+          origErr(...args, '\nCALL STACK ' + seenCount + ':\n' + new Error('trace').stack);
+        } else {
+          origErr(...args);
+        }
+      };
+    }
+
+    const params = new URLSearchParams(location.search);
+    if (params.get('ui') === '0') document.body.classList.add('no-ui');
+    const stateMode = params.get('state') || 'overview';
+    const perspective = params.get('persp') || 'south';
+    const revealAll = params.get('reveal') === '1';
+
+    const container = document.getElementById('canvas-container');
+    const view = createView(container, { board: BOARD, pieces: PIECES });
+    window.__view = view;
+
+    // ?lowfx=1 / ?q=medium：無頭軟體渲染用的畫質模式
+    if (params.get('lowfx') === '1') view.setQuality('low');
+    else if (params.get('q') === 'medium') view.setQuality('medium');
+
+    // 效能測試用開關（?nobloom=1&noshadow=1&dpr=1）
+    if (params.get('nobloom') === '1') view.stage.bloomPass.enabled = false;
+    if (params.get('noshadow') === '1') {
+      view.renderer.shadowMap.enabled = false;
+      view.scene.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+    }
+    const dprParam = Number(params.get('dpr') || 0);
+    if (dprParam > 0) {
+      view.renderer.setPixelRatio(dprParam);
+      view.stage.composer.setPixelRatio(dprParam);
+      view.stage.setSize(container.clientWidth, container.clientHeight);
+    }
+
+    const C = BOARD;
+
+    function addPiece(list, def, side, nodeId, opts = {}) {
+      list.push({
+        uid: `${side}-${def.key}`,
+        side,
+        key: opts.hidden ? null : def.key,
+        name: opts.hidden ? null : def.name,
+        branch: def.branch,
+        nodeId,
+        alive: true,
+        revealed: !!opts.revealed,
+        landed: false,
+      });
+    }
+
+    /** 一般對戰畫面：雙方 30 枚棋子依規則佈陣 */
+    function buildOverviewState({ reveal = false } = {}) {
+      const pieces = [];
+      for (const side of ['south', 'north']) {
+        const zones = C.DEPLOY_ZONES[side];
+        const army = PIECES.filter((p) => p.branch === BRANCH.ARMY);
+        const navy = PIECES.filter((p) => p.branch === BRANCH.NAVY);
+        const air = PIECES.filter((p) => p.branch === BRANCH.AIR);
+        const flag = army.find((p) => p.key === 'flag');
+        const others = army.filter((p) => p.key !== 'flag');
+        const hide = side === 'north' && !reveal;
+        // 軍旗藏在中間城門
+        addPiece(pieces, flag, side, zones.gates[1], { hidden: hide, revealed: hide ? false : true });
+        // 海軍 5 艘
+        navy.forEach((p, i) => addPiece(pieces, p, side, zones.anchors[i], { hidden: hide, revealed: false }));
+        // 空軍永遠公開
+        air.forEach((p, i) => addPiece(pieces, p, side, zones.airports[i], { hidden: false, revealed: true }));
+        // 陸軍：在後方三列排成陣型
+        const rows = side === 'south' ? [12, 11, 10, 9, 8] : [0, 1, 2, 3, 4];
+        const used = new Set();
+        const slots = [];
+        for (const row of rows) {
+          for (let col = 0; col < 13; col++) {
+            const n = C.nodeAt(col, row);
+            if (!n || n.kind === 'airport' || n.kind === 'gate') continue;
+            if (used.has(n.id)) continue;
+            slots.push(n.id);
+          }
+        }
+        // 交錯取點，讓棋子平均分佈在五列
+        const picked = [];
+        const stride = Math.max(1, Math.floor(slots.length / others.length));
+        for (let i = 0; i < others.length; i++) {
+          let idx = Math.min(slots.length - 1, i * stride);
+          while (picked.includes(slots[idx]) && idx < slots.length - 1) idx++;
+          picked.push(slots[idx]);
+        }
+        others.forEach((p, i) => addPiece(pieces, p, side, picked[i], { hidden: hide, revealed: false }));
+      }
+      return {
+        phase: 'play', turn: 1, sideToMove: 'south', winner: null,
+        flagRevealed: { north: false, south: false },
+        deploy: { north: true, south: true },
+        log: [],
+        pieces,
+      };
+    }
+
+    /** 棋子圖鑑：南軍 30 枚排成 3×10 展示 */
+    function buildGalleryState() {
+      const state = buildOverviewState({ reveal: false });
+      const cols = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+      const rows = [12, 11, 10];
+      const southPieces = state.pieces.filter((p) => p.side === 'south');
+      // 依軍種排序：官兵、武器、海軍、空軍、軍旗
+      const order = PIECES.map((p) => p.key);
+      southPieces.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+      southPieces.forEach((p, i) => {
+        const row = rows[Math.floor(i / 10)];
+        const col = cols[i % 10];
+        p.nodeId = C.nodeId(col, row);
+        // 展示時全部公開
+        if (p.key == null) p.key = PIECES.find((d) => d.name === p.name)?.key ?? null;
+      });
+      return state;
+    }
+
+    /** 戰鬥展示：北方坦克深入南境，南軍步兵迎擊 */
+    function buildBattleState() {
+      const state = buildOverviewState({ reveal: true });
+      const occupied = new Set(state.pieces.map((p) => p.nodeId));
+      const freeNode = (exclude = []) => {
+        for (const n of C.NODES) {
+          if (n.zone !== 'south') continue;
+          if (n.kind === 'airport' || n.kind === 'gate') continue;
+          if (occupied.has(n.id) || exclude.includes(n.id)) continue;
+          return n.id;
+        }
+        return C.nodeId(0, 10);
+      };
+      const atk = state.pieces.find((p) => p.side === 'south' && p.key === 'infantry');
+      const def = state.pieces.find((p) => p.side === 'north' && p.key === 'tank');
+      // 把目標格讓出來
+      const defNode = C.nodeId(5, 9);
+      const atkNode = C.nodeId(5, 10);
+      for (const p of state.pieces) {
+        if (p.nodeId === defNode || p.nodeId === atkNode) {
+          if (p !== def && p !== atk) p.nodeId = freeNode();
+        }
+      }
+      if (atk && def) {
+        atk.nodeId = atkNode;
+        atk.key = 'infantry';
+        atk.name = '步兵';
+        atk.revealed = true;
+        def.nodeId = defNode;
+        def.key = 'tank';
+        def.name = '坦克車';
+        def.revealed = true;
+      }
+      return { state, atk, def, atkNode, defNode };
+    }
+
+    function setCamera(pos, target) {
+      view.cancelCameraFly();
+      view.camera.position.set(pos[0], pos[1], pos[2]);
+      view.controls.target.set(target[0], target[1], target[2]);
+      view.controls.update();
+    }
+
+    window.__setCamera = setCamera;
+
+    async function applyState(state) {
+      view.sync(state);
+      await new Promise((r) => setTimeout(r, 60));
+    }
+
+    async function boot() {
+      await view.ready();
+      let state;
+      if (stateMode === 'gallery') state = buildGalleryState();
+      else state = buildOverviewState({ reveal: revealAll });
+      await applyState(state);
+      window.__state = state;
+      if (perspective === 'north') {
+        await view.setPerspective('north');
+      } else if (stateMode !== 'gallery') {
+        await view.setPerspective('south');
+      }
+      // 視角微調（先取消飛行動畫）
+      if (stateMode === 'gallery') {
+        setCamera([0, 7.2, 10.6], [0, 0.6, 4.3]);
+      }
+      initButtons();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      window.__renderReady = true;
+    }
+
+    /* ---------------- 除錯按鈕 ---------------- */
+    function initButtons() {
+      const root = document.getElementById('debug');
+      const btn = (label, fn) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.onclick = () => fn();
+        root.appendChild(b);
+      };
+      btn('視角：南', () => view.setPerspective('south'));
+      btn('視角：北', () => view.setPerspective('north'));
+      btn('顯示／隱藏敵棋', () => {
+        const st = buildOverviewState({ reveal: !window.__revealed });
+        window.__revealed = !window.__revealed;
+        view.sync(st);
+      });
+      btn('選取＋可走點', () => demoHighlight());
+      btn('佈陣模式', () => view.setDeployMode(true, { side: 'south' }));
+      btn('清除光環', () => {
+        view.clearHighlights();
+        view.setSelected(null);
+      });
+      btn('戰鬥特效', () => runBattleDemo());
+      btn('重新佈陣', () => {
+        view.sync(buildOverviewState({ reveal: revealAll }));
+        setCamera([0, 12.5, 14], [0, 0.15, 0]);
+      });
+    }
+
+    function demoHighlight() {
+      const st = window.__state;
+      const south = st.pieces.filter((p) => p.side === 'south' && p.key);
+      const pick = south.find((p) => p.key === 'cavalry') || south[0];
+      view.setSelected(pick.uid);
+      const moves = C.WALK_ADJ.get(pick.nodeId) || [];
+      view.highlightNodes(moves, 'move');
+      const attacks = moves.slice(0, 2);
+      view.highlightNodes([...moves, ...attacks], 'move');
+      view.showBanner('南軍・騎兵', 1400);
+      return pick;
+    }
+
+    window.__demoHighlight = demoHighlight;
+
+    async function runBattleDemo(kind = 'melee') {
+      const { state, atk, def, atkNode, defNode } = buildBattleState();
+      await applyState(state);
+      setCamera([7.2, 5.4, 7.4], [5.0, 0.7, 3.0]);
+      window.__battleStarted = performance.now();
+      window.__captureReady = false;
+      const events = [{
+        type: 'battle',
+        attackerUid: atk.uid,
+        defenderUid: def.uid,
+        from: atkNode,
+        to: defNode,
+        outcome: 'A',
+        reveal: [{ uid: atk.uid, key: 'infantry' }, { uid: def.uid, key: 'tank' }],
+        eliminated: [def.uid],
+        occupied: true,
+        special: kind === 'missile' ? 'missile' : undefined,
+      }];
+      // 若測試飛彈，攻擊方換成飛彈
+      if (kind === 'missile') {
+        const missile = state.pieces.find((p) => p.key === 'missile' && p.side === 'south');
+        if (missile) {
+          missile.nodeId = atkNode;
+          events[0].attackerUid = missile.uid;
+        }
+      }
+      view.animateEvents(events).then(() => {
+        window.__eventsDone = true;
+      });
+      // 在爆炸最精采的一刻通知截圖工具
+      setTimeout(() => { window.__captureReady = true; }, kind === 'missile' ? 760 : 980);
+      window.__captureReady2 = false;
+      setTimeout(() => { window.__captureReady2 = true; }, 1180);
+    }
+    window.__runBattleDemo = runBattleDemo;
+
+    window.__setDemo = async (name) => {
+      if (name === 'gallery') {
+        view.sync(buildGalleryState());
+        setCamera([0, 7.4, 10.6], [0, 0.6, 4.3]);
+      } else if (name === 'army') {
+        view.sync(buildOverviewState({ reveal: false }));
+        setCamera([2.4, 4.4, 8.6], [1.2, 0.5, 4.4]);
+        const south = window.__state.pieces.filter((p) => p.side === 'south');
+        const c = south.find((p) => p.key === 'commander');
+        if (c) view.setSelected(c.uid);
+        view.highlightNodes([C.nodeId(3, 9), C.nodeId(4, 9), C.nodeId(5, 9)], 'move');
+      } else if (name === 'navy') {
+        view.sync(buildOverviewState({ reveal: false }));
+        setCamera([-1.5, 3.0, 6.4], [0.5, 0.1, 1.2]);
+      } else if (name === 'air') {
+        view.sync(buildOverviewState({ reveal: false }));
+        setCamera([4.6, 2.6, 8.4], [6.0, 0.8, 6.2]);
+      } else if (name === 'battle') {
+        await runBattleDemo('melee');
+      } else if (name === 'missile') {
+        await runBattleDemo('missile');
+      } else if (name === 'deploy') {
+        view.sync(buildOverviewState({ reveal: false }));
+        setCamera([0, 10.5, 12.5], [0, 0.2, 3.5]);
+        view.setDeployMode(true, { side: 'south' });
+      } else if (name === 'backs') {
+        view.sync(buildOverviewState({ reveal: false }));
+        setCamera([0, 4.0, -3.4], [0, 0.6, -6.2]);
+      } else if (name === 'highlights') {
+        view.sync(buildGalleryState());
+        setCamera([0, 8.2, 11.4], [0, 0.6, 4.5]);
+        const st = window.__state || buildGalleryState();
+        window.__state = st;
+        const south = st.pieces.filter((p) => p.side === 'south' && p.key);
+        const pick = south.find((p) => p.key === 'cavalry') || south[0];
+        view.setSelected(pick.uid);
+        const adj = C.WALK_ADJ.get(pick.nodeId) || [];
+        view.highlightNodes(adj.slice(0, 6), 'move');
+        view.highlightNodes(adj.slice(0, 2), 'attack');
+        view.showBanner('南軍・騎兵', 1500, { sub: '可移動 / 可攻擊' });
+      } else if (name === 'north') {
+        view.sync(buildOverviewState({ reveal: false }));
+        await view.setPerspective('north');
+        view.setPerspective('north');
+      } else if (name === 'default') {
+        view.sync(buildOverviewState({ reveal: false }));
+        await view.setPerspective('south');
+      }
+    };
+
+    boot().catch((err) => {
+      console.error('[render-test] 初始化失敗', err);
+      window.__renderError = String(err && err.stack ? err.stack : err);
+    });
+  </script>
+</body>
+</html>

@@ -10,6 +10,25 @@
 
 ---
 
+## 線上直接玩
+
+**<https://threeservicechess.fungkingfai.workers.dev>**
+
+（Cloudflare Workers 靜態部署，push 到 GitHub `main` 分支即自動更新。
+本機、區網亦可依下方步驟自行啟動。）
+
+## 遊戲畫面
+
+| 主選單 | 對戰（HUD＋立體棋盤） |
+|---|---|
+| ![主選單](docs/menu.webp) | ![對戰](docs/battle.webp) |
+
+| 30 枚棋子特寫 | 詳細規則頁 |
+|---|---|
+| ![棋子](docs/pieces.webp) | ![規則頁](docs/rules.webp) |
+
+---
+
 ## 快速開始
 
 需求：任何支援 WebGL2 的現代瀏覽器（Chrome / Edge / Firefox / Safari）；區網內可直接開。
@@ -84,12 +103,14 @@ src/core/combat.js         勝負判定
 src/core/legal-moves.js    合法行動產生
 src/core/engine.js         遊戲狀態機
 src/core/rng.js            可重現隨機
-src/ai/                    AI（belief / 決策）
-src/render/                three.js 場景、棋盤、棋子、特效
-src/ui/                    DOM UI、規則頁
-content/                   規則內容
-vendor/three/              three.js r170 與 addons
-tests/                     Node 測試與 Playwright 端對端
+src/ai/                    AI（belief 推理 / 佈陣 / 評估 / 決策）
+src/render/                three.js 場景、棋盤、30 枚棋子模型、動畫與特效
+src/ui/                    DOM UI（選單／HUD／結算／圖鑑／設定）與規則頁
+content/                   規則頁文案
+vendor/three/              three.js r170 與 addons（離線內附）
+tests/                     Node 測試（規則／AI）與 Playwright 端對端
+docs/                      README 遊戲截圖
+wrangler.jsonc             Cloudflare Workers 靜態資產部署設定
 ```
 
 ### 測試
@@ -101,6 +122,14 @@ node tests/e2e.mjs           # Playwright 端對端（需先啟動 http server�
 ```
 
 ---
+
+### 部署（Cloudflare Workers）
+
+本專案為純靜態網站，repo 內附 `wrangler.jsonc`（assets 目錄 = 專案根目錄）與 `.assetsignore`。
+Cloudflare 已連結 GitHub repo，push 到 `main` 即自動部署至
+<https://threeservicechess.fungkingfai.workers.dev>。
+
+> 本機測試用低畫質模式（軟體渲染／無頭瀏覽器）：`index.html?lowfx=1`（關閉 bloom、降解析度、跳過動畫等待）。
 
 ## 規則摘要
 
@@ -130,6 +159,10 @@ node tests/e2e.mjs           # Playwright 端對端（需先啟動 http server�
 3. 行營只阻擋陸軍攻擊；海軍砲擊、空軍、飛彈可攻擊營內棋子。
 4. **空軍棋子永遠公開**（飛行器可見）；戰鬥參與的棋子會公開棋種。
 5. 偵察機獲得的敵棋情報永久保留，並顯示於棋子與情報提示。
+6. **城門誘餌**：三座城門皆可佈置任何陸軍棋子（一門一格）；軍旗藏在其中一座，
+   敵方無法單憑「哪座門有棋」判斷軍旗位置（建議三門都放棋）。
+7. **空軍禁攻城門**：戰鬥機／偵察機不可攻擊或停留在城門節點（可飛越）；
+   軍旗只能被陸軍（或登陸部隊）攻破，避免空軍速攻斬首。偵察機仍可偵察城門上的棋子。
 
 ---
 
