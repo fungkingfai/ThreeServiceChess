@@ -1,0 +1,13 @@
+# 不要把開發檔案上傳到 Cloudflare
+.git
+.gitignore
+.assetsignore
+node_modules
+tests
+tools
+dev
+research
+package.json
+package-lock.json
+wrangler.jsonc
+*.md

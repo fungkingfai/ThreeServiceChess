@@ -1,0 +1,12 @@
+{
+  // Cloudflare Workers 靜態資產部署設定（不需要 Worker 程式碼）
+  // 任何 push 到 main 都會被 Cloudflare 自動部署到
+  // https://threeservicechess.fungkingfai.workers.dev
+  "name": "threeservicechess",
+  "compatibility_date": "2025-09-01",
+  "assets": {
+    "directory": "./",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}

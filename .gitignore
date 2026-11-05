@@ -1,0 +1,4 @@
+node_modules/
+research/
+dev/shots/*.png
+*.log

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>三軍棋 3D — 陸・海・空 三軍立體戰場</title>
+  <meta name="description" content="以 three.js 製作的台灣傳統三軍棋（陸海空三軍棋）3D 網頁遊戲，內建 AI 對手與完整規則。" />
+  <link rel="stylesheet" href="./styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/three.module.js",
+        "three/addons/": "./vendor/three/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <div id="canvas-container" aria-hidden="true"></div>
+    <div id="ui-root"></div>
+    <div id="loading-screen">
+      <div class="loading-inner">
+        <div class="loading-badge">三軍棋</div>
+        <div class="loading-text">正在集結三軍……</div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

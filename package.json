@@ -1,0 +1,21 @@
+{
+  "name": "three-service-chess",
+  "version": "1.0.0",
+  "description": "三軍棋 3D — three.js 網頁遊戲（陸海空三軍棋）",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "start": "python3 -m http.server 8123",
+    "test": "node tests/core.test.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "playwright": "^1.64.1"
+  },
+  "private": true
+}
