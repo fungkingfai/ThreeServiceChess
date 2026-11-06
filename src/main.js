@@ -291,6 +291,7 @@ function selectDeployPiece(pieceKey) {
   if (!piece) return;
   app.selectedDeployKey = pieceKey;
   app.view.setSelected(`${PLAYER_SIDE}:${pieceKey}`);
+  updateMobileTools(false);
   if (typeof app.view.setDeployMode === 'function') {
     app.view.setDeployMode(true, {
       side: PLAYER_SIDE,
@@ -371,6 +372,7 @@ function onNodePickDuringSetup(nodeId) {
   app.playerPlacements.push({ pieceKey, nodeId });
   app.selectedDeployKey = null;
   app.view.setSelected(null);
+  updateMobileTools();
   syncDeployView();
   refreshDeployPanel();
 
@@ -390,6 +392,7 @@ function autoDeployPlayer() {
   app.playerPlacements = placements.map((p) => ({ ...p }));
   app.selectedDeployKey = null;
   app.view.setSelected(null);
+  updateMobileTools();
   syncDeployView();
   refreshDeployPanel();
   toast('已自動佈陣，可直接開始戰鬥，或點棋子調整。', 'ok');
@@ -556,6 +559,7 @@ function computePublicInfo(view) {
 function waitForPlayerAction(token) {
   refreshGameView();
   app.selectedUid = null;
+  updateMobileTools();
   app.view.setInteractive(true);
   app.view.clearHighlights();
   app.view.setSelected(null);
@@ -588,6 +592,7 @@ function onPiecePick(uid) {
   if (!piece.alive) { clearSelection(); return; }
   app.selectedUid = uid;
   app.view.setSelected(uid);
+  updateMobileTools(false);
   const actions = (app.game.getActionsForPiece && app.game.getActionsForPiece(PLAYER_SIDE, uid)) || [];
   // 若引擎沒提供 getActionsForPiece，退回 getLegalActions 過濾
   const list = actions.length ? actions : (app.game.getLegalActions(PLAYER_SIDE) || []).filter((a) => a.pieceUid === uid);
@@ -625,6 +630,7 @@ function clearSelection() {
   app.selectedUid = null;
   app.view.setSelected(null);
   app.view.clearHighlights();
+  updateMobileTools();
   if (app.ui && typeof app.ui.setSelectedPiece === 'function') app.ui.setSelectedPiece(null);
 }
 
@@ -677,6 +683,7 @@ async function performPlayerAction(action) {
     toast('行動執行錯誤，請重試。', 'error');
   } finally {
     app.busy = false;
+    updateMobileTools();
     if (resolve) resolve();
   }
 }
@@ -967,14 +974,21 @@ function setupMobileTools() {
   app.mobileTools = wrap;
 }
 
+/** 是否正處於「已選棋、等待點棋盤」狀態（此時收起浮動工具列避免遮擋） */
+function isAwaitingBoardTap() {
+  if (app.phase === 'setup') return !!app.selectedDeployKey;
+  if (app.phase === 'play') return !!app.selectedUid;
+  return false;
+}
+
 function updateMobileTools(show) {
   const el = app.mobileTools || document.getElementById('mobile-tools');
   if (!el) return;
   let visible;
   if (show === undefined) {
-    visible = app.isCoarse && !app.modalOpen && (app.phase === 'setup' || app.phase === 'play');
+    visible = app.isCoarse && !app.modalOpen && (app.phase === 'setup' || app.phase === 'play') && !isAwaitingBoardTap();
   } else {
-    visible = !!show && app.isCoarse;
+    visible = !!show && app.isCoarse && !isAwaitingBoardTap();
   }
   el.classList.toggle('is-visible', visible);
   scheduleInsets(140);
@@ -1015,11 +1029,8 @@ function computeInsets() {
   const H = window.innerHeight || 600;
   let top = 6;
   let bottom = 6;
-  let left = 6;
-  let right = 6;
-  // 右側浮動鏡頭工具（44px 寬 + 安全距）不可覆蓋棋盤，否則會吃掉點擊
-  const toolsEl = app.mobileTools || document.getElementById('mobile-tools');
-  if (toolsEl && toolsEl.classList.contains('is-visible')) right = Math.max(right, 58);
+  const left = 6;
+  const right = 6;
   if (app.phase === 'setup') {
     const tray = document.querySelector('.setup__tray');
     if (tray) {
@@ -1123,7 +1134,7 @@ function escapeHtml(s) {
 function bindGlobalKeys() {
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (app.phase === 'setup') { app.selectedDeployKey = null; app.view.clearHighlights(); }
+      if (app.phase === 'setup') { app.selectedDeployKey = null; app.view.clearHighlights(); updateMobileTools(); }
       else if (app.phase === 'play') clearSelection();
     }
     if (e.key === 'r' && e.ctrlKey) return;
