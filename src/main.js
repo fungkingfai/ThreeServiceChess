@@ -977,6 +977,7 @@ function updateMobileTools(show) {
     visible = !!show && app.isCoarse;
   }
   el.classList.toggle('is-visible', visible);
+  scheduleInsets(140);
 }
 
 function mobileZoom(factor) {
@@ -1014,8 +1015,11 @@ function computeInsets() {
   const H = window.innerHeight || 600;
   let top = 6;
   let bottom = 6;
-  const left = 6;
-  const right = 6;
+  let left = 6;
+  let right = 6;
+  // 右側浮動鏡頭工具（44px 寬 + 安全距）不可覆蓋棋盤，否則會吃掉點擊
+  const toolsEl = app.mobileTools || document.getElementById('mobile-tools');
+  if (toolsEl && toolsEl.classList.contains('is-visible')) right = Math.max(right, 58);
   if (app.phase === 'setup') {
     const tray = document.querySelector('.setup__tray');
     if (tray) {
