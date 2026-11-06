@@ -156,6 +156,12 @@ export function openCodexModal(manager, { selectedKey = '', onClose = null } = {
       <aside class="codex__detail" data-codex-detail aria-live="polite"></aside>
     </div>`;
 
+  // 手機友善：底部固定「關閉圖鑑」按鈕（不用摸右上角 X 也能離開）
+  modal.footer.hidden = false;
+  modal.footer.innerHTML = '<div class="modal__foot-actions"><button type="button" class="btn btn--primary codex__close-btn" data-codex-close>關閉圖鑑</button></div>';
+  const footerClose = $('[data-codex-close]', modal.footer);
+  if (footerClose) footerClose.addEventListener('click', () => modal.close());
+
   const gridEl = $('[data-codex-grid]', modal.body);
   const detailEl = $('[data-codex-detail]', modal.body);
   const countEl = $('[data-codex-count]', modal.body);

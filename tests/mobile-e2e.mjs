@@ -71,6 +71,32 @@ try {
   assert(info.isMobile === true, '偵測為手機 / 觸控裝置');
   await shot(pageP, 'menu');
 
+  // 圖鑑：必須有明顯「關閉」出口（底部按鈕＋右上 X），且能返主選單
+  await pageP.locator('button', { hasText: '棋子圖鑑' }).first().tap();
+  await pageP.waitForTimeout(1000);
+  const codexOpen = await pageP.evaluate(() => {
+    const close = document.querySelector('[data-codex-close]');
+    const r = close ? close.getBoundingClientRect() : null;
+    return {
+      open: !!document.querySelector('.modal.is-open'),
+      hasFooterClose: !!close && r.width >= 44 && r.height >= 44 && r.bottom <= innerHeight + 1,
+      hasX: !!document.querySelector('.modal__close'),
+    };
+  });
+  console.log('  codex open', JSON.stringify(codexOpen));
+  assert(codexOpen.open, '手機可開啟棋子圖鑑');
+  assert(codexOpen.hasFooterClose, '圖鑑底部有大型「關閉圖鑑」按鈕且在視口內');
+  assert(codexOpen.hasX, '圖鑑右上角有關閉 X');
+  await shot(pageP, 'codex');
+  await pageP.locator('[data-codex-close]').first().tap();
+  await pageP.waitForTimeout(900);
+  const codexClosed = await pageP.evaluate(() => ({
+    open: !!document.querySelector('.modal.is-open'),
+    screen: window.__SANJUNQI__.ui.getState().screen,
+  }));
+  console.log('  codex closed', JSON.stringify(codexClosed));
+  assert(!codexClosed.open && codexClosed.screen === 'menu', '圖鑑可按底部按鈕關閉並返回主選單');
+
   // 開始遊戲
   const startBtn = pageP.locator('button', { hasText: '開始遊戲' }).first();
   assert(await startBtn.count() > 0, '主選單有開始遊戲按鈕');
@@ -218,7 +244,43 @@ try {
     assert(sel.shown, '觸控可選取棋子並顯示資訊卡');
     assert(!sel.shown || sel.h <= 180, '手機棋子資訊卡高度 ≤ 180px');
     await shot(pageP, 'selected');
+
+    // 遊戲中開啟圖鑑 → 底部按鈕關閉 → 回到棋局
+    const moreBtn = pageP.locator('[data-selected-more]').first();
+    if (await moreBtn.count()) await moreBtn.tap();
+    await pageP.waitForTimeout(600);
+    const codexLink = pageP.locator('[data-hud="codex-pick"]').first();
+    if (await codexLink.count()) {
+      await codexLink.tap();
+      await pageP.waitForTimeout(1000);
+      const inGameCodex = await pageP.evaluate(() => {
+        const close = document.querySelector('[data-codex-close]');
+        const r = close ? close.getBoundingClientRect() : null;
+        return {
+          open: !!document.querySelector('.modal.is-open'),
+          closeUsable: !!close && r.height >= 44 && r.bottom <= innerHeight + 1,
+        };
+      });
+      assert(inGameCodex.open, '遊戲中可開啟棋子圖鑑');
+      assert(inGameCodex.closeUsable, '遊戲中圖鑑的關閉按鈕可點（在視口內）');
+      await pageP.locator('[data-codex-close]').first().tap();
+      await pageP.waitForTimeout(900);
+      const backToGame = await pageP.evaluate(() => ({
+        open: !!document.querySelector('.modal.is-open'),
+        phase: window.__SANJUNQI__.phase,
+      }));
+      assert(!backToGame.open && backToGame.phase === 'play', '關閉圖鑑後回到棋局（非卡死）');
+    }
     if (pick.targetScr) {
+      // 圖鑑 round-trip 後重新選一次棋子（避免焦點/選取狀態被 modal 流程影響）
+      const state = await pageP.evaluate(() => ({
+        selectedUid: window.__SANJUNQI__.app.selectedUid,
+        cardShown: (() => { const e = document.querySelector('[data-selected]'); return !!(e && !e.hidden); })(),
+      }));
+      if (!state.selectedUid || !state.cardShown) {
+        await pageP.touchscreen.tap(pick.pieceScr.x, pick.pieceScr.y);
+        await pageP.waitForTimeout(1200);
+      }
       const beforeTurn = await pageP.evaluate(() => window.__SANJUNQI__.game.getView('south').turn);
       await pageP.touchscreen.tap(pick.targetScr.x, pick.targetScr.y);
       await pageP.waitForTimeout(5000);

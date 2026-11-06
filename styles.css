@@ -5524,3 +5524,42 @@ button.sum-chip:hover { background: rgba(214, 178, 92, 0.18); color: var(--gold-
   .confirm__message { font-size: 15px; }
   .confirm__detail { font-size: 13px; }
 }
+
+/* ==================================================================
+   手機版修正（Lead）：圖鑑一定要有明顯「關閉」出口
+   ================================================================== */
+.modal--codex .modal__body { display: flex; flex-direction: column; }
+.modal--codex .codex { flex: 1 1 auto; min-height: 0; height: auto; }
+.modal--codex .modal__foot {
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(180deg, rgba(8, 14, 20, 0.4), rgba(5, 9, 13, 0.92));
+}
+.modal--codex .modal__foot .btn {
+  min-height: 44px;
+  min-width: 180px;
+  justify-content: center;
+}
+@media (max-width: 1023px) {
+  .modal--codex .codex { grid-template-rows: minmax(0, 1fr) minmax(120px, 34vh); }
+  .modal--codex .modal__foot .btn { width: 100%; min-height: 46px; }
+}
+@media (max-width: 700px) {
+  .modal--codex .modal__foot { padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); }
+  .modal--codex .codex { grid-template-rows: minmax(0, 1fr) minmax(110px, 30vh); }
+  .modal--codex .codex__close-btn { font-size: 14px; letter-spacing: 0.08em; }
+}
+
+/* 手機版：modal 右上關閉加大、規則頁底部再給一個「關閉規則」出口 */
+@media (max-width: 1023px) {
+  .modal__close { width: 44px; height: 44px; }
+  .modal__head { padding-right: 10px; }
+  .modal__foot .btn { min-height: 44px; }
+}
+.modal--rules .modal__foot {
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+}
+.modal--rules .modal__foot .btn { min-height: 44px; min-width: 180px; justify-content: center; }
+@media (max-width: 700px) {
+  .modal--rules .modal__foot { padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); }
+  .modal--rules .modal__foot .btn { width: 100%; min-height: 46px; }
+}

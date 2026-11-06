@@ -54,6 +54,12 @@ export function openRulesModal(manager, { chapter = '', onClose = null } = {}) {
     onClose,
   });
 
+  // 手機友善：底部固定「關閉規則」按鈕（右上 X 之外的第二個明顯出口）
+  modal.footer.hidden = false;
+  modal.footer.innerHTML = '<div class="modal__foot-actions"><button type="button" class="btn btn--primary rules__close-btn" data-rules-close>關閉規則</button></div>';
+  const rulesFooterClose = $('[data-rules-close]', modal.footer);
+  if (rulesFooterClose) rulesFooterClose.addEventListener('click', () => modal.close());
+
   modal.body.innerHTML = `
     <div class="rules-layout">
       <nav class="rules-nav" aria-label="規則章節導覽">

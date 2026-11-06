@@ -10,6 +10,34 @@ import { icon } from './icons.js';
 export function createModalManager(layer, { onChange = null } = {}) {
   const stack = [];
   let escListener = null;
+  // 手機「返回鍵／返回手勢」可關閉最上層 modal，而不是離開網站
+  let historyPushed = false;
+  let ignoreNextPop = false;
+
+  function pushModalHistory() {
+    if (historyPushed) return;
+    try {
+      window.history.pushState({ sanjunqiModal: true }, '');
+      historyPushed = true;
+    } catch (e) { /* 某些環境不支援 history，忽略 */ }
+  }
+
+  function dropModalHistory() {
+    if (!historyPushed) return;
+    historyPushed = false;
+    ignoreNextPop = true;
+    try { window.history.back(); } catch (e) { ignoreNextPop = false; }
+  }
+
+  const onPopState = () => {
+    if (ignoreNextPop) { ignoreNextPop = false; return; }
+    if (!stack.some((m) => m.isOpen)) return;
+    historyPushed = false;
+    [...stack].reverse().forEach((m) => { try { m.close(); } catch (e) { /* 忽略 */ } });
+  };
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('popstate', onPopState);
+  }
 
   const notify = () => {
     if (typeof onChange === 'function') {
@@ -92,6 +120,7 @@ export function createModalManager(layer, { onChange = null } = {}) {
       root.classList.add('is-closing');
       const index = stack.indexOf(instance);
       if (index >= 0) stack.splice(index, 1);
+      if (!stack.some((m) => m.isOpen)) dropModalHistory();
       syncEsc();
       notify();
       window.setTimeout(() => {
@@ -118,6 +147,7 @@ export function createModalManager(layer, { onChange = null } = {}) {
 
     layer.append(root);
     stack.push(instance);
+    pushModalHistory();
     syncEsc();
     notify();
     requestAnimationFrame(() => {
@@ -130,6 +160,7 @@ export function createModalManager(layer, { onChange = null } = {}) {
 
   return {
     open,
+    onPopState,
     closeTop() {
       const top = [...stack].reverse().find((m) => m.isOpen && m.closable);
       top?.close();
