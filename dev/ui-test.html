@@ -315,7 +315,7 @@
       ui.showScreen('menu');
     }
 
-    function sceneSetup() {
+    function sceneSetup(options = {}) {
       ui.showScreen('setup');
       const placedKeys = [
         'commander', 'army_group', 'corps', 'division', 'brigade',
@@ -335,6 +335,7 @@
         onStart: () => setScene('game'),
       });
       ui.setDeployHint('城門可放任何陸軍棋子（軍旗＋誘餌）；軍旗限城門。建議三門都放棋。');
+      if (options.collapsed !== undefined) ui.setSetupCollapsed(options.collapsed);
     }
 
     function sceneGame(options = {}) {
@@ -431,7 +432,15 @@
 
     const SCENES = {
       menu: sceneMenu,
-      setup: sceneSetup,
+      setup: () => sceneSetup(),
+      'setup-collapsed': () => sceneSetup({ collapsed: true }),
+      'setup-expanded': () => sceneSetup({ collapsed: false }),
+      'setup-picked': () => {
+        sceneSetup({ collapsed: false });
+        setTimeout(() => {
+          document.querySelector('.piece-chip[data-piece-key="scout"]')?.click();
+        }, 250);
+      },
       game: () => sceneGame({ log: true }),
       'game-ai': () => sceneGame({ log: true, sideToMove: 'north', aiThinking: true }),
       'game-drawer': sceneGameDrawer,

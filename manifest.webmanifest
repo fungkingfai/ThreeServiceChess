@@ -1,0 +1,19 @@
+{
+  "name": "三軍棋 3D — 陸・海・空 三軍立體戰場",
+  "short_name": "三軍棋",
+  "description": "以 three.js 製作的台灣傳統三軍棋（陸海空三軍棋）3D 網頁遊戲，內建 AI 對手與完整規則。",
+  "lang": "zh-Hant",
+  "dir": "ltr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#05090d",
+  "theme_color": "#05090d",
+  "categories": ["games", "board"],
+  "icons": [
+    { "src": "./assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

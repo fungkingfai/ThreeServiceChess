@@ -44,6 +44,7 @@ import { DEFAULT_SETTINGS, DIFFICULTY_META } from './data.js';
 import { $, on } from './dom.js';
 
 const SETTINGS_KEY = 'sanjunqi.settings.v1';
+const ORIENTATION_HINT_KEY = 'sanjunqi.ui.landscapeHint.v1';
 const SCREEN_NAMES = ['menu', 'setup', 'game', 'gameover'];
 
 function loadSettings(deps) {
@@ -127,6 +128,7 @@ export function createUI(deps = {}) {
     'onStartGame', 'onMenu', 'onRestart', 'onSurrender', 'onAutoDeploy', 'onResetDeploy',
     'onStartBattle', 'onDeployPick', 'onBattleClose', 'onSettingsChange', 'onSoundChange',
     'onCancel', 'onModalChange', 'onRulesOpen', 'onRulesClose', 'onCodexOpen', 'onGameOver',
+    'onSetupCollapsedChange',
   ];
   for (const key of HANDLER_KEYS) if (typeof deps[key] === 'function') handlers[key] = deps[key];
 
@@ -164,6 +166,7 @@ export function createUI(deps = {}) {
       else if (action === 'menu') invoke('onMenu');
       else if (action === 'codex') openCodex();
     },
+    onCollapsedChange: (collapsed, compact) => invoke('onSetupCollapsedChange', collapsed, compact),
   });
 
   const hud = createHud({
@@ -218,6 +221,28 @@ export function createUI(deps = {}) {
   }
 
   // ---- Loading ----
+  /** 直向手機顯示一次性「橫向視野更佳」提示（可用 deps.showOrientationHint=false 關閉） */
+  function showOrientationHintOnce({ force = false } = {}) {
+    if (!force && deps.showOrientationHint === false) return false;
+    try {
+      if (!force && window.localStorage.getItem(ORIENTATION_HINT_KEY)) return false;
+      const width = window.innerWidth || 0;
+      const height = window.innerHeight || 0;
+      if (!force && (width > 700 || height <= width)) return false;
+      try { window.localStorage.setItem(ORIENTATION_HINT_KEY, '1'); } catch { /* 忽略 */ }
+      window.setTimeout(() => {
+        if (state.destroyed) return;
+        toasts.show('把手機轉成橫向，棋盤視野更完整、操作更順手。', 'info', {
+          title: '橫向視野更佳',
+          duration: 4500,
+        });
+      }, force ? 0 : 1500);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function hideLoading(delay = 0) {
     if (state.loadingHidden) return;
     const finish = () => {
@@ -242,6 +267,7 @@ export function createUI(deps = {}) {
 
   function openRules(chapter = '') {
     if (state.destroyed) return null;
+    hud.closeDrawers();
     if (state.rulesModal?.isOpen) {
       if (!chapter) return state.rulesModal;
       state.rulesModal.close();
@@ -260,6 +286,7 @@ export function createUI(deps = {}) {
 
   function openSettings() {
     if (state.destroyed) return null;
+    hud.closeDrawers();
     if (state.settingsModal?.isOpen) return state.settingsModal;
     const result = openSettingsModal(manager, {
       settings: { ...state.settings },
@@ -277,6 +304,7 @@ export function createUI(deps = {}) {
 
   function openCodex(selectedKey = '') {
     if (state.destroyed) return null;
+    hud.closeDrawers();
     if (state.codexModal?.isOpen) {
       state.codexModal.close();
       state.codexModal = null;
@@ -392,6 +420,29 @@ export function createUI(deps = {}) {
       if (state.destroyed) return;
       setup.setSelectedKey(pieceKey || '');
     },
+    /** main.js 也用這個名稱同步選取棋子 */
+    setSelectedDeployKey(pieceKey) {
+      if (state.destroyed) return;
+      setup.setSelectedKey(pieceKey || '');
+    },
+    /** 手機佈陣托盤：收合／展開（main.js 於手機進入佈陣時呼叫 true） */
+    setSetupCollapsed(collapsed) {
+      if (state.destroyed) return false;
+      return setup.setCollapsed(collapsed);
+    },
+    /** 目前是否處於收合狀態（桌機會回傳 false，因托盤固定展開） */
+    getSetupCollapsed() {
+      if (state.destroyed) return false;
+      return setup.getCollapsed();
+    },
+    toggleSetupCollapsed() {
+      if (state.destroyed) return false;
+      return setup.toggleCollapsed();
+    },
+    /** 目前是否為手機／矮螢幕佈陣版面 */
+    isSetupCompact() {
+      return setup.isCompact();
+    },
 
     // 對戰
     setAiThinking(thinking) {
@@ -432,6 +483,7 @@ export function createUI(deps = {}) {
     // 戰鬥結算卡
     setBattle(battleData, onCloseCallback) {
       if (state.destroyed) return null;
+      hud.closeDrawers();
       // 若舊的戰鬥卡還沒關，先關閉（會觸發舊的 onClose，避免流程卡住）
       if (state.battleModal?.isOpen) {
         try { state.battleModal.close(); } catch { /* 忽略 */ }
@@ -500,6 +552,10 @@ export function createUI(deps = {}) {
 
     // 載入畫面
     hideLoading,
+    /** 顯示「橫向視野更佳」提示（測試或手動觸發用；正常只顯示一次） */
+    showOrientationHint(force = true) {
+      return showOrientationHintOnce({ force: !!force });
+    },
 
     // 事件綁定（main.js 建立後再補 callback 用）
     setHandlers(partial = {}) {
@@ -550,6 +606,9 @@ export function createUI(deps = {}) {
   showScreen(deps.initialScreen && SCREEN_NAMES.includes(deps.initialScreen) ? deps.initialScreen : 'menu');
   if (deps.autoHideLoading !== false) {
     requestAnimationFrame(() => hideLoading(deps.loadingDelay ?? 260));
+  }
+  if (deps.showOrientationHint !== false) {
+    window.setTimeout(() => { if (!state.destroyed) showOrientationHintOnce(); }, 900);
   }
 
   return api;

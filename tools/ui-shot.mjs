@@ -35,6 +35,9 @@ const SCENES = [
   { name: 'ui-menu-mobile', hash: 'menu', viewport: MOBILE, wait: 1000 },
   { name: 'ui-setup', hash: 'setup', wait: 1000 },
   { name: 'ui-setup-mobile', hash: 'setup', viewport: MOBILE, wait: 1000 },
+  { name: 'ui-setup-expanded-mobile', hash: 'setup-expanded', viewport: MOBILE, wait: 1000 },
+  { name: 'ui-setup-picked-mobile', hash: 'setup-picked', viewport: MOBILE, wait: 1200 },
+  { name: 'ui-setup-landscape', hash: 'setup', viewport: { width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true }, wait: 1000 },
   { name: 'ui-game', hash: 'game', wait: 1200 },
   { name: 'ui-game-ai', hash: 'game-ai', wait: 1200 },
   { name: 'ui-game-mobile', hash: 'game', viewport: MOBILE, wait: 1200 },
@@ -141,6 +144,10 @@ async function main() {
         locale: 'zh-TW',
         timezoneId: 'Asia/Taipei',
         colorScheme: 'dark',
+      });
+      // 既有 UI 截圖不顯示一次性「橫向視野更佳」提示
+      await context.addInitScript(() => {
+        try { window.localStorage.setItem('sanjunqi.ui.landscapeHint.v1', '1'); } catch { /* 忽略 */ }
       });
       const page = await context.newPage();
       const errors = [];

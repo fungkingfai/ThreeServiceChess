@@ -440,7 +440,11 @@ export function createHud({ onAction = null, playerSide = 'south', side = 'south
         </section>
 
         <footer class="hud-panel__foot">
-          <button type="button" class="btn btn--danger btn--sm btn--icon" data-hud="surrender">${icon('flag')}<span>投降</span></button>
+          <button type="button" class="btn btn--danger btn--sm btn--icon hud-panel__surrender" data-hud="surrender">${icon('flag')}<span>投降</span></button>
+          <div class="hud-panel__foot-extra">
+            <button type="button" class="btn btn--ghost btn--sm btn--icon" data-hud="settings">${icon('settings')}<span>設定</span></button>
+            <button type="button" class="btn btn--ghost btn--sm btn--icon" data-hud="restart">${icon('refresh')}<span>重新開始</span></button>
+          </div>
           <span class="hud-panel__foot-hint">每一步都會立即檢查勝負</span>
         </footer>
       </aside>
@@ -662,10 +666,12 @@ export function createHud({ onAction = null, playerSide = 'south', side = 'south
     if (!piece) {
       selectedEl.hidden = true;
       selectedEl.innerHTML = '';
+      selectedEl.classList.remove('is-expanded');
       root.classList.remove('has-selection');
       return;
     }
     selectedEl.hidden = false;
+    selectedEl.classList.remove('is-expanded');
     root.classList.add('has-selection');
     const hidden = !piece.key;
     const tier = hidden ? '未曝光的敵棋' : pieceTierLabel(piece);
@@ -679,13 +685,16 @@ export function createHud({ onAction = null, playerSide = 'south', side = 'south
           <span class="selected-card__meta">${escapeHtml(tier)}${piece.side ? `・${sideLabel(piece.side)}` : ''}</span>
         </div>
         ${hidden ? '' : branchTag(piece.branch)}
-        <button type="button" class="icon-btn selected-card__close" data-close-selected aria-label="關閉棋子資訊">${icon('close')}</button>
+        <button type="button" class="selected-card__more" data-selected-more aria-expanded="false" aria-label="顯示棋子詳細資訊">詳細</button>
+        <button type="button" class="icon-btn selected-card__close" data-close-selected aria-label="關閉棋子資訊" title="關閉">${icon('close')}</button>
       </div>
       <p class="selected-card__desc">${escapeHtml(hidden ? '敵方棋子尚未曝光，只能得知其軍種。' : (piece.desc || ''))}</p>
-      ${hidden ? '' : tagList(piece, { max: 4 })}
-      <div class="selected-card__actions">
-        ${hidden ? '' : `<button type="button" class="link-btn" data-hud="codex-pick">在圖鑑中查看 ${icon('arrowRight')}</button>`}
-        <span class="selected-card__hint">點擊光點執行行動・按 Esc 取消</span>
+      <div class="selected-card__extra" data-selected-extra>
+        ${hidden ? '' : tagList(piece, { max: 4 })}
+        <div class="selected-card__actions">
+          ${hidden ? '' : `<button type="button" class="link-btn" data-hud="codex-pick">在圖鑑中查看 ${icon('arrowRight')}</button>`}
+          <span class="selected-card__hint">點擊光點執行行動・按 Esc 取消</span>
+        </div>
       </div>`;
   }
 
@@ -742,8 +751,17 @@ export function createHud({ onAction = null, playerSide = 'south', side = 'south
     else if (action === 'codex-pick') onAction?.('codex-pick', state.selectedKey);
     else onAction?.(action);
   });
-  delegate(el, '[data-close-selected]', 'click', () => setSelected(null));
+  delegate(el, '[data-close-selected]', 'click', (event) => {
+    event.stopPropagation();
+    setSelected(null);
+  });
   delegate(el, '[data-drawer-scrim]', 'click', closeDrawers);
+  delegate(el, '[data-selected-more]', 'click', (event, btn) => {
+    event.stopPropagation();
+    const expanded = selectedEl.classList.toggle('is-expanded');
+    btn.setAttribute('aria-expanded', String(expanded));
+    btn.textContent = expanded ? '收起' : '詳細';
+  });
 
   // 初始外觀
   renderTurn();

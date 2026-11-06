@@ -40,6 +40,10 @@ const app = {
   loopToken: 0,
   playerResolve: null,
   lastBattle: null,
+  isCoarse: false,
+  insets: null,
+  _insetKey: '',
+  mobileHintShown: false,
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -59,6 +63,42 @@ async function boot() {
   const view = await createView(container, { board: BOARD_DATA, pieces: PIECES });
   if (!view) throw new Error('createView 未回傳 View');
   app.view = view;
+
+  // ---- 先套用畫質設定，再等首幀（低階 GPU/軟體渲染才不會首幀卡很久） ----
+  // 手機 / 觸控裝置
+  try {
+    app.isCoarse = (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches)
+      || window.innerWidth < 700;
+  } catch (e) { app.isCoarse = window.innerWidth < 700; }
+  if (app.isCoarse) {
+    try {
+      if (typeof view.setQuality === 'function') view.setQuality('medium');
+      if (view.controls) {
+        view.controls.enableDamping = true;
+        view.controls.dampingFactor = 0.12;
+        view.controls.rotateSpeed = 0.75;
+      }
+    } catch (e) { console.warn('[三軍棋] 手機畫質設定失敗', e); }
+  }
+  // 低畫質模式（無頭測試／低階 GPU）：?lowfx=1 或 ?quality=low
+  try {
+    const params = new URLSearchParams(location.search);
+    app.lowfx = params.get('lowfx') === '1' || params.get('quality') === 'low';
+    if (app.lowfx && typeof view.setQuality === 'function') view.setQuality('low');
+    if (view.stage?.bloomPass) view.stage.bloomPass.enabled = false;
+    if (app.lowfx || app.isCoarse) {
+      try {
+        if (view.stage?.composer?.setPixelRatio) view.stage.composer.setPixelRatio(app.lowfx ? 0.7 : 1.25);
+        if (view.renderer?.setPixelRatio) view.renderer.setPixelRatio(app.lowfx ? 0.7 : Math.min(1.5, window.devicePixelRatio || 1));
+        if (view.renderer) view.renderer.shadowMap.enabled = false;
+      } catch (e) { console.warn('[三軍棋] 畫質設定失敗', e); }
+    }
+    if (app.lowfx) {
+      app.settings.lowfx = true;
+      if (view.fx) view.fx.timeScale = 2.4;
+    }
+  } catch (e) { /* ignore */ }
+
   if (typeof view.ready === 'function') await view.ready();
   app.view.setPerspective(PLAYER_SIDE);
 
@@ -81,23 +121,8 @@ async function boot() {
   }
   if (typeof view.setSound === 'function') view.setSound(app.settings.sound);
 
-  // 低畫質模式（無頭測試／低階 GPU）：?lowfx=1 或 ?quality=low
-  try {
-    const params = new URLSearchParams(location.search);
-    app.lowfx = params.get('lowfx') === '1' || params.get('quality') === 'low';
-    if (app.lowfx && typeof view.setQuality === 'function') view.setQuality('low');
-    if (app.lowfx) {
-      app.settings.lowfx = true;
-      // 低畫質 / 軟體渲染（無頭測試）用：關閉 bloom、降低像素比、加速動畫
-      try {
-        if (view.stage?.bloomPass) view.stage.bloomPass.enabled = false;
-        if (view.stage?.composer?.setPixelRatio) view.stage.composer.setPixelRatio(0.7);
-        if (view.renderer?.setPixelRatio) view.renderer.setPixelRatio(0.7);
-        if (view.renderer) view.renderer.shadowMap.enabled = false;
-        if (view.fx) view.fx.timeScale = 2.4;
-      } catch (e) { console.warn('[三軍棋] lowfx 設定失敗', e); }
-    }
-  } catch (e) { /* ignore */ }
+  setupMobileTools();
+  startInsetWatcher();
 
   bindGlobalKeys();
   const loading = $('#loading-screen');
@@ -141,6 +166,11 @@ function buildUIDeps() {
     onSettingsChange: (next) => applySettings(next),
     onCancel: () => clearSelection(),
     onBattleClose: () => {},
+    onModalChange: (isOpen) => {
+      app.modalOpen = !!isOpen;
+      updateMobileTools(isOpen ? false : undefined);
+    },
+    onGameOver: () => updateMobileTools(false),
   };
 }
 
@@ -149,6 +179,8 @@ function buildUIDeps() {
 function showMenu() {
   app.phase = 'menu';
   app.loopToken++;
+  updateMobileTools(false);
+  scheduleInsets(200);
   if (app.game && !app.game.getView(PLAYER_SIDE).winner) {
     // 不銷毀舊局，只是回到選單
   }
@@ -202,11 +234,19 @@ async function startNewGame() {
     if (app.ui && typeof app.ui.closeBattle === 'function') app.ui.closeBattle();
     if (app.ui && typeof app.ui.clearLog === 'function') app.ui.clearLog();
     if (app.view && typeof app.view.setInteractive === 'function') app.view.setInteractive(true);
+    if (app.isCoarse) {
+      // 手機：佈陣托盤預設收合，讓棋盤完整可見；玩家可再展開選棋
+      try {
+        if (app.ui && typeof app.ui.setSetupCollapsed === 'function') app.ui.setSetupCollapsed(true);
+      } catch (e) { /* UI 尚未支援 */ }
+      showMobileHint('點棋子再點棋盤即可佈陣；底部托盤可收起／展開。');
+    }
     app.view.setPerspective(PLAYER_SIDE);
     if (typeof app.view.setDeployMode === 'function') app.view.setDeployMode(true, { side: PLAYER_SIDE, placed: [] });
     if (typeof app.ui.setDeployPanel === 'function') refreshDeployPanel();
     syncDeployView();
     refreshDeployPanel();
+    updateMobileTools();
     if (app.ui && typeof app.ui.setDeployHint === 'function') {
       app.ui.setDeployHint('點選左側棋子，再點棋盤上的藍色光點佈陣。軍旗必須佈於三座城門之一。');
     }
@@ -431,6 +471,7 @@ function syncDeployView() {
 }
 
 function refreshDeployPanel() {
+  scheduleInsets(180);
   if (!app.ui || typeof app.ui.setDeployPanel !== 'function') return;
   const placed = placedKeyMap();
   app.ui.setDeployPanel({
@@ -462,7 +503,13 @@ async function beginPlayLoop() {
   app.busy = false;
   app.selectedUid = null;
   if (app.ui && typeof app.ui.showScreen === 'function') app.ui.showScreen('game');
+  if (app.isCoarse) {
+    setTimeout(() => applyInsets(true), 100);
+    setTimeout(() => applyInsets(true), 420);
+  }
   refreshGameView();
+  updateMobileTools();
+  scheduleInsets(220);
   while (app.phase === 'play' && app.game && token === app.loopToken) {
     const view = app.game.getView(PLAYER_SIDE);
     if (view.winner) { handleGameOver(view); return; }
@@ -846,7 +893,9 @@ function handleGameOver(view) {
     turns: view.turn || 0,
     publicInfo: computePublicInfo(view),
   };
+  updateMobileTools(false);
   if (app.ui && typeof app.ui.showGameOver === 'function') app.ui.showGameOver(result);
+  scheduleInsets(200);
 }
 
 function surrender() {
@@ -890,6 +939,155 @@ function loadSettings() {
       if (typeof s.difficulty === 'string') app.difficulty = s.difficulty;
     }
   } catch (e) { /* ignore */ }
+}
+
+/* ============================== 手機 / 觸控支援 ============================== */
+
+/** 建立手機浮動鏡頭工具（＋／－／重置） */
+function setupMobileTools() {
+  if (!app.isCoarse) return;
+  if (document.getElementById('mobile-tools')) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'mobile-tools';
+  wrap.setAttribute('aria-label', '視角工具');
+  const mk = (label, title, handler) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.title = title;
+    b.setAttribute('aria-label', title);
+    b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); handler(); });
+    wrap.appendChild(b);
+    return b;
+  };
+  mk('＋', '放大', () => mobileZoom(0.82));
+  mk('－', '縮小', () => mobileZoom(1.22));
+  mk('⟳', '重設視角', () => mobileResetView());
+  (document.getElementById('app') || document.body).appendChild(wrap);
+  app.mobileTools = wrap;
+}
+
+function updateMobileTools(show) {
+  const el = app.mobileTools || document.getElementById('mobile-tools');
+  if (!el) return;
+  let visible;
+  if (show === undefined) {
+    visible = app.isCoarse && !app.modalOpen && (app.phase === 'setup' || app.phase === 'play');
+  } else {
+    visible = !!show && app.isCoarse;
+  }
+  el.classList.toggle('is-visible', visible);
+}
+
+function mobileZoom(factor) {
+  if (!app.view) return;
+  try {
+    if (typeof app.view.zoomBy === 'function') {
+      app.view.zoomBy(factor);
+      return;
+    }
+    // 後備：直接對 OrbitControls 做 dolly
+    const THREE = app.view.three;
+    const cam = app.view.camera;
+    const ctl = app.view.controls;
+    if (!THREE || !cam || !ctl) return;
+    const target = ctl.target;
+    const offset = cam.position.clone().sub(target);
+    const dist = Math.min(46, Math.max(9, offset.length() * factor));
+    offset.setLength(dist);
+    cam.position.copy(target).add(offset);
+    ctl.update();
+  } catch (e) { console.warn('[三軍棋] 縮放失敗', e); }
+}
+
+function mobileResetView() {
+  if (!app.view) return;
+  try {
+    if (typeof app.view.resetView === 'function') { app.view.resetView(); return; }
+    if (typeof app.view.setPerspective === 'function') app.view.setPerspective(PLAYER_SIDE);
+  } catch (e) { /* ignore */ }
+}
+
+/** 依目前 UI 佔用空間計算 3D 安全區（僅手機） */
+function computeInsets() {
+  if (!app.isCoarse) return null;
+  const H = window.innerHeight || 600;
+  let top = 6;
+  let bottom = 6;
+  const left = 6;
+  const right = 6;
+  if (app.phase === 'setup') {
+    const tray = document.querySelector('.setup__tray');
+    if (tray) {
+      const r = tray.getBoundingClientRect();
+      if (r.height > 8 && r.top < H) bottom = Math.max(bottom, Math.ceil(H - r.top) + 6);
+    }
+    // 佈陣畫面：把上方浮動按鈕列（規則／返回／圖鑑）也算進安全區
+    const btnEls = Array.from(document.querySelectorAll('.screen--setup .icon-btn, .screen--setup .btn'));
+    let maxBottom = 0;
+    for (const el of btnEls) {
+      const r = el.getBoundingClientRect();
+      if (r.height > 0 && r.width > 0 && r.top < H * 0.45) maxBottom = Math.max(maxBottom, r.bottom);
+    }
+    if (maxBottom > 0) top = Math.max(top, Math.ceil(maxBottom) + 6);
+    top = Math.max(top, 58);
+  } else if (app.phase === 'play' || app.phase === 'gameover') {
+    const topEl = document.querySelector('.hud__top');
+    if (topEl) {
+      const r = topEl.getBoundingClientRect();
+      if (r.height > 0) top = Math.max(top, Math.ceil(r.bottom) + 6);
+    }
+    // 底部固定預留：不要每次選棋都因卡片高度改變而重新取景
+    bottom = Math.max(bottom, Math.min(140, Math.round(H * 0.17)));
+  } else {
+    return null;
+  }
+  return { top, bottom, left, right };
+}
+
+let _insetTimer = 0;
+function scheduleInsets(delay = 140) {
+  if (!app.isCoarse) return;
+  window.clearTimeout(_insetTimer);
+  _insetTimer = window.setTimeout(() => applyInsets(true), delay);
+}
+
+function applyInsets(force = false) {
+  if (!app.isCoarse || !app.view) return;
+  const insets = computeInsets();
+  if (!insets) return;
+  const key = JSON.stringify(insets);
+  if (!force && key === app._insetKey) return;
+  app._insetKey = key;
+  app.insets = insets;
+  try {
+    if (typeof app.view.setSafeInsets === 'function') {
+      app.view.setSafeInsets(insets);
+      if (typeof app.view.reframe === 'function') app.view.reframe({ animate: false });
+    } else if (typeof app.view.reframe === 'function') {
+      app.view.reframe({ animate: false });
+    }
+  } catch (e) { console.warn('[三軍棋] 手機取景失敗', e); }
+}
+
+function startInsetWatcher() {
+  window.addEventListener('resize', () => { scheduleInsets(160); updateMobileTools(); }, { passive: true });
+  window.addEventListener('orientationchange', () => {
+    scheduleInsets(320);
+    setTimeout(() => scheduleInsets(150), 900);
+    setTimeout(() => applyInsets(true), 1400);
+  }, { passive: true });
+  // 手機上 UI 面板會展開/收合（佈陣托盤），低頻檢查尺寸變化
+  setInterval(() => {
+    if (!app.isCoarse) return;
+    if (app.phase === 'setup' || app.phase === 'play') applyInsets(false);
+  }, 500);
+}
+
+function showMobileHint(text) {
+  if (!app.isCoarse || app.mobileHintShown) return;
+  app.mobileHintShown = true;
+  setTimeout(() => toast(text, 'info'), 700);
 }
 
 /* ============================== 小工具 ============================== */
@@ -980,6 +1178,9 @@ function exposeDebugApi() {
     /** 目前是否正在等待玩家操作（動畫結束、可點擊） */
     isPlayerTurn: () => app.phase === 'play' && !!app.playerResolve && !app.busy,
     isBusy: () => !!app.busy,
+    isMobile: () => !!app.isCoarse,
+    getInsets: () => app.insets,
+    applyInsets: (force = true) => applyInsets(force),
     /** 測試用：直接顯示結算畫面 */
     debugGameOver: (winner = 'south') => {
       if (!app.game) return;

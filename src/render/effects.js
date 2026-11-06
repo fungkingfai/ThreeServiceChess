@@ -355,6 +355,11 @@ export function createEffects({ scene, camera, stage }) {
 
   function highlightNodes(positions, kind = 'move') {
     clearHighlights();
+    addHighlights(positions, kind);
+  }
+
+  /** 疊加高亮（不清除既有），供「可走 + 可攻擊」同時顯示 */
+  function addHighlights(positions, kind = 'move') {
     const color = HIGHLIGHT_COLORS[kind] ?? HIGHLIGHT_COLORS.move;
     positions.forEach((pos, i) => {
       if (highlightActive.length >= MAX_HL) return;
@@ -695,6 +700,7 @@ export function createEffects({ scene, camera, stage }) {
     setSelection,
     setHover,
     highlightNodes,
+    addHighlights,
     clearHighlights,
     shockwave,
     flash,

@@ -2,10 +2,49 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#05090d" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>三軍棋 3D — 陸・海・空 三軍立體戰場</title>
   <meta name="description" content="以 three.js 製作的台灣傳統三軍棋（陸海空三軍棋）3D 網頁遊戲，內建 AI 對手與完整規則。" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" />
+  <link rel="icon" type="image/svg+xml" href="./assets/icon.svg" />
   <link rel="stylesheet" href="./styles.css" />
+  <style>
+    /* 手機輔助：畫布不讓瀏覽器手勢干擾（pinch 由 OrbitControls 處理） */
+    #canvas-container canvas { touch-action: none; -webkit-user-select: none; user-select: none; }
+    html, body { overscroll-behavior: none; }
+    /* 手機浮動鏡頭工具（由 main.js 動態建立/顯示） */
+    #mobile-tools {
+      position: fixed;
+      right: calc(10px + env(safe-area-inset-right, 0px));
+      top: 48%;
+      transform: translateY(-50%);
+      z-index: 22;
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+    #mobile-tools.is-visible { display: flex; }
+    #mobile-tools button {
+      width: 44px; height: 44px; border-radius: 12px;
+      border: 1px solid rgba(244, 220, 154, 0.28);
+      background: rgba(9, 17, 24, 0.72);
+      color: #f4dc9a;
+      font: 600 21px/1 system-ui, -apple-system, "Noto Sans TC", sans-serif;
+      display: flex; align-items: center; justify-content: center;
+      pointer-events: auto;
+      -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+      touch-action: manipulation;
+    }
+    #mobile-tools button:active { transform: scale(0.94); background: rgba(244, 220, 154, 0.18); }
+    #mobile-tools .zoom-icon { font-size: 22px; line-height: 1; }
+  </style>
   <script type="importmap">
     {
       "imports": {

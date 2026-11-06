@@ -1,14 +1,37 @@
 /**
  * 佈陣畫面
  * ------------------------------------------------------------------
- * 左側 30 枚棋子托盤（依軍種分組、已放置灰化）、右側佈陣提示與限制。
+ * 桌機／平板：左側 30 枚棋子托盤（依軍種分組、已放置灰化）、右側佈陣提示與限制。
+ * 手機（≤700px 或矮螢幕 ≤480px）：托盤改為可收合底部面板；
+ *   收合時只顯示標題／已放置數／已選棋子與快速按鈕，讓棋盤完整露出；
+ *   點選棋子後自動收合，方便玩家立即點棋盤放置。
  * 托盤點擊只負責通知 main.js（onPick），實際放置由棋盤點擊處理。
  */
 
 import { PIECES, groupPieces, toPiece, DEPLOY_META, MOVE_META, pieceTierLabel } from './data.js';
 import { pieceChip, pieceToken, branchTag } from './token.js';
 import { icon } from './icons.js';
-import { delegate, $, $$, escapeHtml, setHTML } from './dom.js';
+import { delegate, $, $$, escapeHtml } from './dom.js';
+
+/** 手機（含橫向矮螢幕）判定：與 CSS 的 media query 保持一致 */
+export const COMPACT_MEDIA = '(max-width: 700px), (max-height: 480px)';
+export const DESKTOP_MEDIA = '(min-width: 701px) and (min-height: 481px)';
+
+function mediaMatches(query, fallback = false) {
+  try {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return fallback;
+    return window.matchMedia(query).matches;
+  } catch {
+    return fallback;
+  }
+}
+
+/** 目前是否為手機／矮螢幕（可收合托盤）版面 */
+export function isCompactLayout() {
+  if (mediaMatches(COMPACT_MEDIA)) return true;
+  if (typeof window === 'undefined') return false;
+  return window.innerWidth <= 700 || window.innerHeight <= 480;
+}
 
 /** 把多種可能的 placed 格式正規化成 Set<pieceKey> */
 export function normalizePlaced(placed) {
@@ -46,7 +69,7 @@ const LIMIT_ROWS = [
   { icon: 'air', label: '空軍兩機', value: '2 枚', detail: '兩座機場' },
 ];
 
-export function createSetup({ onAction = null } = {}) {
+export function createSetup({ onAction = null, onCollapsedChange = null } = {}) {
   const el = document.createElement('section');
   el.className = 'screen screen--setup';
   el.dataset.screenPanel = 'setup';
@@ -54,7 +77,7 @@ export function createSetup({ onAction = null } = {}) {
   const groups = groupPieces();
   el.innerHTML = `
     <div class="setup">
-      <aside class="setup__tray panel" aria-label="棋子托盤">
+      <aside class="setup__tray panel" data-setup-tray aria-label="棋子托盤">
         <header class="panel__head">
           <div class="panel__heading">
             <span class="panel__icon">${icon('grid')}</span>
@@ -63,9 +86,15 @@ export function createSetup({ onAction = null } = {}) {
               <p class="panel__sub">南軍・綠方｜把 30 枚棋子放上棋盤</p>
             </div>
           </div>
-          <div class="setup__counter" aria-live="polite">
-            <span class="setup__counter-value" data-setup-count>0</span>
-            <span class="setup__counter-total">/ 30</span>
+          <div class="setup__head-actions">
+            <div class="setup__counter" aria-live="polite">
+              <span class="setup__counter-value" data-setup-count>0</span>
+              <span class="setup__counter-total">/ 30</span>
+            </div>
+            <button type="button" class="setup__toggle" data-setup="toggle" aria-expanded="true" aria-label="展開或收合棋子托盤">
+              <span class="setup__toggle-icon" aria-hidden="true">${icon('chevronDown')}</span>
+              <span class="setup__toggle-text" data-setup-toggle-text>收合托盤</span>
+            </button>
           </div>
         </header>
         <div class="setup__progress" role="progressbar" aria-label="佈陣進度" aria-valuemin="0" aria-valuemax="30" aria-valuenow="0">
@@ -83,6 +112,17 @@ export function createSetup({ onAction = null } = {}) {
                 ${group.items.map((piece) => pieceChip(piece, { side: 'south' })).join('')}
               </div>
             </section>`).join('')}
+        </div>
+
+        <div class="setup__collapsed" data-setup-collapsed>
+          <button type="button" class="setup__collapsed-info" data-setup="expand" aria-label="展開棋子托盤選棋">
+            <span class="setup__collapsed-name" data-setup-collapsed-piece>尚未選棋</span>
+            <span class="setup__collapsed-hint" data-setup-collapsed-hint>點「展開托盤」選棋</span>
+          </button>
+          <div class="setup__collapsed-actions">
+            <button type="button" class="btn btn--ghost btn--sm btn--icon" data-setup="auto">${icon('sparkles')}<span>自動佈陣</span></button>
+            <button type="button" class="btn btn--primary btn--sm btn--icon setup__start" data-setup="start" disabled>${icon('play')}<span>開始戰鬥</span></button>
+          </div>
         </div>
 
         <footer class="setup__foot">
@@ -143,20 +183,61 @@ export function createSetup({ onAction = null } = {}) {
     selectedKey: '',
     canStart: false,
     side: 'south',
+    collapsed: false,
+    compact: false,
     onPick: null,
     onAuto: null,
     onReset: null,
     onStart: null,
   };
 
+  const trayEl = $('[data-setup-tray]', el);
   const groupsEl = $('[data-setup-groups]', el);
   const countEl = $('[data-setup-count]', el);
   const barEl = $('[data-setup-bar]', el);
   const progressEl = $('.setup__progress', el);
-  const startBtn = $('[data-setup="start"]', el);
+  const startBtns = $$('[data-setup="start"]', el);
   const footHint = $('[data-setup-foot-hint]', el);
   const selectedEl = $('[data-setup-selected]', el);
   const hintEl = $('[data-setup-hint]', el);
+  const toggleEl = $('[data-setup="toggle"]', el);
+  const toggleTextEl = $('[data-setup-toggle-text]', el);
+  const collapsedPieceEl = $('[data-setup-collapsed-piece]', el);
+  const collapsedHintEl = $('[data-setup-collapsed-hint]', el);
+
+  // 初始化：手機／矮螢幕預設收合，讓棋盤完整露出
+  state.compact = isCompactLayout();
+  state.collapsed = state.compact;
+  if (state.compact) el.classList.add('setup--compact');
+
+  let lastReportedCollapsed = null;
+
+  function renderCollapsed() {
+    const effective = state.compact && state.collapsed;
+    trayEl.classList.toggle('is-collapsed', effective);
+    el.classList.toggle('setup--collapsed', effective);
+    if (effective !== lastReportedCollapsed) {
+      lastReportedCollapsed = effective;
+      if (typeof onCollapsedChange === 'function') {
+        try { onCollapsedChange(effective, state.compact); } catch (error) { console.warn('[UI] onCollapsedChange 錯誤', error); }
+      }
+    }
+
+    if (toggleEl) toggleEl.setAttribute('aria-expanded', String(!effective));
+    if (toggleTextEl) toggleTextEl.textContent = effective ? '展開托盤' : '收合托盤';
+
+    const piece = state.selectedKey ? toPiece(state.selectedKey) : null;
+    if (collapsedPieceEl) {
+      if (piece) {
+        const placed = state.placed.has(piece.key);
+        collapsedPieceEl.textContent = `已選：${piece.short || piece.name}`;
+        collapsedHintEl.textContent = placed ? '已放置・點托盤選下一枚' : '點棋盤藍點放置';
+      } else {
+        collapsedPieceEl.textContent = `已放置 ${state.placed.size}/30`;
+        collapsedHintEl.textContent = state.placed.size >= 30 ? '按「開始戰鬥」' : '點「展開托盤」選棋';
+      }
+    }
+  }
 
   function renderChips() {
     for (const chipEl of $$('.piece-chip', groupsEl)) {
@@ -185,7 +266,7 @@ export function createSetup({ onAction = null } = {}) {
     barEl.style.width = `${pct}%`;
     progressEl.setAttribute('aria-valuenow', String(count));
     const complete = count >= 30;
-    startBtn.disabled = !(complete || state.canStart);
+    for (const btn of startBtns) btn.disabled = !(complete || state.canStart);
     footHint.textContent = complete
       ? '佈陣完成！按「開始戰鬥」進入對局。'
       : state.canStart
@@ -225,23 +306,76 @@ export function createSetup({ onAction = null } = {}) {
     renderChips();
     renderProgress();
     renderSelected();
+    renderCollapsed();
   }
 
-  // 托盤點擊
-  delegate(groupsEl, '.piece-chip', 'click', (_event, chipEl) => {
+  // ---------------- 收合／展開 ----------------
+  function setCollapsed(value) {
+    state.collapsed = !!value;
+    renderCollapsed();
+    // 立即強制版面同步（即使沒有 transition，也確保後續 getBoundingClientRect 拿到新高度）
+    if (trayEl && typeof trayEl.getBoundingClientRect === 'function') void trayEl.getBoundingClientRect().height;
+    return getCollapsed();
+  }
+
+  function getCollapsed() {
+    // 以實際 class 為準，避免 state 與畫面不同步
+    if (!trayEl) return false;
+    return !!(state.compact && trayEl.classList.contains('is-collapsed'));
+  }
+
+  function toggleCollapsed() {
+    return setCollapsed(!state.collapsed);
+  }
+
+  function isCompact() {
+    return !!state.compact;
+  }
+
+  /** 視窗尺寸／方向改變：≥701×481 自動展開；矮螢幕（橫向）預設收合 */
+  function handleViewportChange() {
+    const nextCompact = isCompactLayout();
+    if (!nextCompact) {
+      state.compact = false;
+      state.collapsed = false;
+      el.classList.remove('setup--compact');
+      renderCollapsed();
+      return;
+    }
+    const wasCompact = state.compact;
+    state.compact = true;
+    el.classList.add('setup--compact');
+    if (typeof window !== 'undefined' && window.innerHeight <= 480) {
+      state.collapsed = true; // 橫向手機：保持收合，讓棋盤最大化
+    } else if (!wasCompact) {
+      state.collapsed = true; // 從桌機縮到手機時預設收合
+    }
+    renderCollapsed();
+  }
+
+  // 托盤點擊：手機上點選棋子後自動收合，方便立即點棋盤放置
+  delegate(groupsEl, '.piece-chip', 'click', (event, chipEl) => {
+    // 防止點棋子的事件穿透到底下棋盤（3D picking）
+    event.stopPropagation();
     const key = chipEl.dataset.pieceKey;
     state.selectedKey = key;
     renderChips();
     renderSelected();
     if (typeof state.onPick === 'function') state.onPick(key);
+    if (state.compact) setCollapsed(true);
+    renderCollapsed();
   });
 
   // 按鈕
   delegate(el, '[data-setup]', 'click', (_event, btn) => {
     const action = btn.dataset.setup;
-    if (action === 'auto') state.onAuto?.();
-    else if (action === 'reset') state.onReset?.();
+    if (action === 'auto') {
+      state.onAuto?.();
+      if (state.compact) setCollapsed(true);
+    } else if (action === 'reset') state.onReset?.();
     else if (action === 'start') state.onStart?.();
+    else if (action === 'toggle') setCollapsed(!state.collapsed);
+    else if (action === 'expand') setCollapsed(false);
   });
   delegate(el, '[data-setup-side]', 'click', (_event, btn) => {
     switch (btn.dataset.setupSide) {
@@ -251,6 +385,23 @@ export function createSetup({ onAction = null } = {}) {
       default: break;
     }
   });
+
+  // Esc：收合托盤（手機）
+  const onKeyDown = (event) => {
+    if (event.key === 'Escape' && state.compact && !state.collapsed) setCollapsed(true);
+  };
+  if (typeof document !== 'undefined') document.addEventListener('keydown', onKeyDown);
+
+  // 監聽 resize / orientationchange
+  let resizeTimer = 0;
+  const onViewportResize = () => {
+    window.clearTimeout(resizeTimer);
+    resizeTimer = window.setTimeout(handleViewportChange, 80);
+  };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', onViewportResize, { passive: true });
+    window.addEventListener('orientationchange', onViewportResize, { passive: true });
+  }
 
   /**
    * 更新佈陣面板
@@ -281,15 +432,33 @@ export function createSetup({ onAction = null } = {}) {
     state.selectedKey = key || '';
     renderChips();
     renderSelected();
+    renderCollapsed();
   }
+
+  function destroy() {
+    if (typeof document !== 'undefined') document.removeEventListener('keydown', onKeyDown);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('resize', onViewportResize);
+      window.removeEventListener('orientationchange', onViewportResize);
+      window.clearTimeout(resizeTimer);
+    }
+    el.remove();
+  }
+
+  renderAll();
 
   return {
     el,
     update,
     setHint,
     setSelectedKey,
+    setCollapsed,
+    getCollapsed,
+    toggleCollapsed,
+    isCompact,
+    handleViewportChange,
     getState: () => ({ ...state, placed: new Set(state.placed) }),
-    destroy() { el.remove(); },
+    destroy,
   };
 }
 

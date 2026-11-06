@@ -1142,16 +1142,44 @@ export function createBoard3D(options = {}) {
     return HEIGHTS.land;
   }
 
-  /** 射線 → 節點 id（棋盤內），失敗回傳 null */
+  /**
+   * 射線 → 節點 id（棋盤內），失敗回傳 null。
+   * 可傳 opts = { camera, width, height, pointerX, pointerY, tolerancePx }：
+   * 若射線沒有直接命中棋盤，改用「螢幕距離最近節點」容錯（手機觸控用）。
+   */
   const _plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.02);
   const _hit = new THREE.Vector3();
-  function pickNode(raycaster) {
-    if (!raycaster.ray.intersectPlane(_plane, _hit)) return null;
-    if (Math.abs(_hit.x) > 6.55 || Math.abs(_hit.z) > 6.55) return null;
-    const col = Math.round(_hit.x + 6);
-    const row = Math.round(_hit.z + 6);
-    if (col < 0 || col > 12 || row < 0 || row > 12) return null;
-    return nodeId(col, row);
+  const _proj = new THREE.Vector3();
+  function pickNode(raycaster, opts = {}) {
+    if (raycaster.ray.intersectPlane(_plane, _hit)) {
+      if (Math.abs(_hit.x) <= 6.55 && Math.abs(_hit.z) <= 6.55) {
+        const col = Math.round(_hit.x + 6);
+        const row = Math.round(_hit.z + 6);
+        if (col >= 0 && col < 13 && row >= 0 && row < 13) return nodeId(col, row);
+      }
+    }
+    // 最近節點容錯（觸控裝置才會開啟）
+    const tol = Number(opts.tolerancePx) || 0;
+    const cam = opts.camera;
+    if (tol > 0 && cam && opts.width > 0 && opts.height > 0) {
+      let best = null;
+      let bestD2 = tol * tol;
+      for (const n of NODES) {
+        _proj.set(n.x, groundY(n.id), n.z).project(cam);
+        if (_proj.z > 1) continue;
+        const sx = ((_proj.x + 1) / 2) * opts.width;
+        const sy = ((1 - _proj.y) / 2) * opts.height;
+        const dx = sx - (opts.pointerX || 0);
+        const dy = sy - (opts.pointerY || 0);
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          best = n.id;
+        }
+      }
+      return best;
+    }
+    return null;
   }
 
   function update(t) {

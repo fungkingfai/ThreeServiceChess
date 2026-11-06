@@ -15,7 +15,8 @@
 **<https://threeservicechess.fungkingfai.workers.dev>**
 
 （Cloudflare Workers 靜態部署，push 到 GitHub `main` 分支即自動更新。
-本機、區網亦可依下方步驟自行啟動。）
+本機、區網亦可依下方步驟自行啟動。手機可用瀏覽器「加到主畫面」，
+以全螢幕 App 形式遊玩（已附 PWA manifest 與 icons）。）
 
 ## 遊戲畫面
 
@@ -41,6 +42,31 @@ python3 -m http.server 8123
 
 開啟 <http://127.0.0.1:8123/> 即可遊玩。**不需要** npm install、不需要建置流程；
 three.js 已內附於 `vendor/three/`，完全離線可玩。
+
+---
+
+## 手機版
+
+手機／平板（觸控裝置）已完整支援，直向、橫向都可玩：
+
+- **佈陣托盤可收合**：預設收合成底部細條，讓棋盤完整露出；點「展開托盤」選棋，
+  選好棋子後托盤自動收合，直接點棋盤藍點放置。
+- **動態安全區取景**：3D 鏡頭會依 top bar／佈陣托盤／底部資訊卡的實際高度自動取景，
+  棋盤（含南北城牆）完整落在可見區內；旋轉裝置或改變視窗大小會重新計算。
+- **觸控優化**：觸控點擊容錯放大（棋子與棋盤格都有吸附容錯）、拖曳旋轉不會誤觸，
+  支援雙指縮放，右側另有 **＋／－／⟳** 浮動鏡頭按鈕。
+- **手機畫質**：自動使用 `medium` 畫質（關閉陰影、降低 bloom 與像素比）以維持流暢。
+- **PWA**：可「加到主畫面」以獨立全螢幕 App 開啟（`manifest.webmanifest` + icons）。
+- 多種小螢幕 UI：對戰 HUD 濃縮、抽屜式戰況／日誌、選中棋子資訊卡緊湊版、
+  規則／圖鑑／結算／設定在 390×844 可完整滾動操作。
+
+| 手機佈陣（收合） | 手機對戰 |
+|---|---|
+| ![手機佈陣](docs/mobile-setup.webp) | ![手機對戰](docs/mobile-play.webp) |
+
+| 手機選棋（緊湊資訊卡） | 手機橫向 |
+|---|---|
+| ![手機選棋](docs/mobile-selected.webp) | ![手機橫向](docs/mobile-landscape.webp) |
 
 ---
 
@@ -86,6 +112,7 @@ three.js 已內附於 `vendor/three/`，完全離線可玩。
 - **AI 對手**：三個難度，會自動佈陣、依隱藏資訊推理、評估戰鬥期望與威脅，不作弊。
 - **動畫與特效**：移動補間、戰鬥光爆、粒子、飛彈軌跡、偵察掃描、鏡頭震動、Bloom。
 - **完整規則書**：30 枚棋子資料表、勝負表、特殊規則、數位版調整說明與參考資料。
+- **手機可玩**：可收合佈陣托盤、動態安全區取景、觸控容錯、縮放按鈕、手機畫質與 PWA。
 - **零依賴、免建置**：three.js 內附，開瀏覽器即玩。
 
 ---
@@ -108,7 +135,9 @@ src/render/                three.js 場景、棋盤、30 枚棋子模型、動�
 src/ui/                    DOM UI（選單／HUD／結算／圖鑑／設定）與規則頁
 content/                   規則頁文案
 vendor/three/              three.js r170 與 addons（離線內附）
-tests/                     Node 測試（規則／AI）與 Playwright 端對端
+tests/                     Node 測試（規則／AI）、桌面 e2e、手機 e2e（mobile-e2e.mjs）
+assets/                    PWA icons（192/512/apple-touch）
+manifest.webmanifest       手機「加到主畫面」設定
 docs/                      README 遊戲截圖
 wrangler.jsonc             Cloudflare Workers 靜態資產部署設定
 ```
@@ -118,7 +147,8 @@ wrangler.jsonc             Cloudflare Workers 靜態資產部署設定
 ```bash
 node tests/core.test.mjs     # 規則引擎單元測試
 node tests/ai.test.mjs       # AI 測試
-node tests/e2e.mjs           # Playwright 端對端（需先啟動 http server）
+node tests/e2e.mjs           # Playwright 桌面端對端（需先啟動 http server）
+node tests/mobile-e2e.mjs    # Playwright 手機端對端（iPhone 13 直向＋橫向、觸控）
 ```
 
 ---

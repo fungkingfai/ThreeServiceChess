@@ -49,6 +49,28 @@ export function createView(container, options = {}) {
   const fx = createEffects({ scene: stage.scene, camera: stage.camera, stage });
   const audio = createAudio();
 
+  /* ---------------- 觸控 / 手機偵測 ---------------- */
+  const canvasEl = stage.renderer.domElement;
+  canvasEl.style.touchAction = 'none';
+  canvasEl.style.userSelect = 'none';
+  canvasEl.style.webkitUserSelect = 'none';
+  canvasEl.style.webkitTapHighlightColor = 'transparent';
+
+  const coarseMedia = typeof window.matchMedia === 'function'
+    ? window.matchMedia('(pointer: coarse)')
+    : null;
+  let coarsePointer = !!(coarseMedia?.matches || (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0));
+
+  /** 手機/平板（coarse pointer 或窄畫面） */
+  function isMobileLayout() {
+    return coarsePointer || (container.clientWidth > 0 && container.clientWidth < 700);
+  }
+
+  /** 觸控時放大棋子點擊判定筒（不影響視覺） */
+  function hitRadiusScale() {
+    return isMobileLayout() ? 1.55 : 1;
+  }
+
   const pieces = new Map();
   const hitTargets = [];
   const sharedHitGeo = new THREE.CylinderGeometry(0.46, 0.46, 1.6, 8);
@@ -57,6 +79,10 @@ export function createView(container, options = {}) {
   let state = null;
   let interactive = true;
   let autoFrame = true;
+  /** 目前「可點擊目標」的高亮節點集合（move/attack/deploy）。
+   *  手機上棋子 hit 筒放大後，目標格可能落在 hit 筒內，
+   *  此時應優先判定為節點點擊（移動/攻擊），而不是重新選取棋子。 */
+  let highlightPriorityIds = new Set();
   let selectedUid = null;
   let animating = 0;
   let deployMode = false;
@@ -94,6 +120,8 @@ export function createView(container, options = {}) {
     // 不可見的點擊判定筒
     const hit = new THREE.Mesh(sharedHitGeo, hitMat);
     hit.position.y = 0.75;
+    const hs = hitRadiusScale();
+    hit.scale.set(hs, 1, hs);
     hit.userData.uid = p.uid;
     obj.hitMesh = hit;
     obj.group.add(hit);
@@ -543,16 +571,54 @@ export function createView(container, options = {}) {
   ];
   const _probe = new THREE.Vector3();
 
-  /** HUD 安全邊（左右面板約 320px；上下保留 HUD 列） */
-  function hudSafeMargins(w, h) {
-    const sidePx = Math.min(340, w * 0.26);
-    const topPx = Math.min(120, h * 0.13);
-    const bottomPx = Math.min(105, h * 0.12);
+  /* ---------------- 動態安全區（setSafeInsets） ---------------- */
+  let safeInsets = null;      // main 指定的 CSS px
+  let insetsExplicit = false;
+
+  /** 未指定時的預設邊距：桌面沿用 HUD 邊距；手機只留少量呼吸空間 */
+  function defaultInsets(w, h) {
+    if (isMobileLayout()) {
+      const padX = Math.max(6, Math.round(Math.min(24, w * 0.035)));
+      const padY = Math.max(6, Math.round(Math.min(28, h * 0.03)));
+      return { top: padY, bottom: padY, left: padX, right: padX };
+    }
     return {
-      left: -1 + (2 * sidePx) / w,
-      right: 1 - (2 * sidePx) / w,
-      top: 1 - (2 * topPx) / h,
-      bottom: -1 + (2 * bottomPx) / h,
+      top: Math.min(120, Math.round(h * 0.13)),
+      bottom: Math.min(105, Math.round(h * 0.12)),
+      left: Math.min(340, Math.round(w * 0.26)),
+      right: Math.min(340, Math.round(w * 0.26)),
+    };
+  }
+
+  /** 目前生效的安全區（CSS px），clamp 到視窗內 */
+  function effectiveInsets(w, h) {
+    const base = insetsExplicit && safeInsets ? { ...safeInsets } : defaultInsets(w, h);
+    let { top, right, bottom, left } = base;
+    top = Math.max(0, Math.min(h * 0.46, Number(top) || 0));
+    bottom = Math.max(0, Math.min(h * 0.46, Number(bottom) || 0));
+    left = Math.max(0, Math.min(w * 0.46, Number(left) || 0));
+    right = Math.max(0, Math.min(w * 0.46, Number(right) || 0));
+    // 左右（或上下）合計不可吃滿畫面
+    if (left + right > w * 0.9) {
+      const k = (w * 0.9) / (left + right);
+      left *= k; right *= k;
+    }
+    if (top + bottom > h * 0.9) {
+      const k = (h * 0.9) / (top + bottom);
+      top *= k; bottom *= k;
+    }
+    return { top: Math.round(top), right: Math.round(right), bottom: Math.round(bottom), left: Math.round(left) };
+  }
+
+  /** 換算為 NDC 安全框 */
+  function safeMargins(w, h) {
+    const ins = effectiveInsets(w, h);
+    return {
+      insets: ins,
+      left: -1 + (2 * ins.left) / w,
+      right: 1 - (2 * ins.right) / w,
+      top: 1 - (2 * ins.top) / h,
+      bottom: -1 + (2 * ins.bottom) / h,
     };
   }
 
@@ -573,18 +639,20 @@ export function createView(container, options = {}) {
   }
 
   /** 以數值搜尋找出「棋盤與城牆完整落在安全區」的相機距離 */
+  let lastFitDistance = 20;
+
   function computeFitDistance(side = 'south') {
     const w = Math.max(1, container.clientWidth || 1280);
     const h = Math.max(1, container.clientHeight || 800);
-    const safe = hudSafeMargins(w, h);
+    const safe = safeMargins(w, h);
     const dir = viewDir(side);
     const points = [...BOARD_CORNERS, ...extraProbePoints(side)];
     const cam = FIT_CAM;
     cam.fov = stage.camera.fov;
     cam.aspect = w / h;
     cam.updateProjectionMatrix();
-    let best = 46;
-    for (let d = 13; d <= 46; d += 0.2) {
+    let best = 120;
+    for (let d = 12; d <= 120; d += 0.25) {
       cam.position.copy(dir).multiplyScalar(d);
       cam.lookAt(0, 0.15, 0);
       cam.updateMatrixWorld();
@@ -601,13 +669,18 @@ export function createView(container, options = {}) {
         break;
       }
     }
+    lastFitDistance = best;
     return best;
   }
 
   function applyPerspective(side, { animate = true } = {}) {
     perspective = side === 'north' ? 'north' : 'south';
     autoFrame = true;
+    // 先取消進行中的相機飛行，避免舊的 flyTo 在下一幀覆蓋新的取景
+    stage.cancelFly();
     const dist = computeFitDistance(perspective);
+    stage.controls.minDistance = Math.max(4.5, dist * 0.38);
+    stage.controls.maxDistance = Math.max(dist * 2.6, 48);
     const pos = viewDir(perspective).multiplyScalar(dist).toArray();
     const target = [0, 0.15, 0];
     if (!animate) {
@@ -622,6 +695,24 @@ export function createView(container, options = {}) {
   stage.controls.addEventListener('start', () => {
     autoFrame = false;
   });
+
+  /* ---------------- 方向改變 / 觸控型態改變 ---------------- */
+  function onCoarseChange() {
+    coarsePointer = !!(coarseMedia?.matches || (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0));
+    const hs = hitRadiusScale();
+    for (const obj of pieces.values()) {
+      if (obj.hitMesh) obj.hitMesh.scale.set(hs, 1, hs);
+    }
+    if (autoFrame) applyPerspective(perspective, { animate: false });
+  }
+  if (coarseMedia?.addEventListener) coarseMedia.addEventListener('change', onCoarseChange);
+  const onOrientationChange = () => {
+    // 等瀏覽器完成尺寸更新後再重新取景
+    setTimeout(() => {
+      if (autoFrame) applyPerspective(perspective, { animate: false });
+    }, 180);
+  };
+  window.addEventListener('orientationchange', onOrientationChange);
 
   /* ================================================================ */
   /* 互動                                                              */
@@ -638,13 +729,22 @@ export function createView(container, options = {}) {
       -((clientY - rect.top) / rect.height) * 2 + 1
     );
     raycaster.setFromCamera(ndc, stage.camera);
+    let pieceUid = null;
     const hits = raycaster.intersectObjects(hitTargets, false);
     if (hits.length) {
       const uid = hits[0].object.userData.uid;
-      if (uid != null && pieces.has(uid)) return { pieceUid: uid };
+      if (uid != null && pieces.has(uid)) pieceUid = uid;
     }
-    const nodeId = board.pickNode(raycaster);
-    return { nodeId };
+    // 節點判定：射線平面命中以外，手機再加「最近節點」螢幕距離容錯
+    const nodeId = board.pickNode(raycaster, {
+      camera: stage.camera,
+      width: rect.width,
+      height: rect.height,
+      pointerX: clientX - rect.left,
+      pointerY: clientY - rect.top,
+      tolerancePx: isMobileLayout() ? 24 : 0,
+    });
+    return { pieceUid, nodeId };
   }
 
   function onPointerDown(e) {
@@ -660,8 +760,18 @@ export function createView(container, options = {}) {
     const dy = e.clientY - pointerDown.y;
     const dt = performance.now() - pointerDown.t;
     pointerDown = null;
-    if (dx * dx + dy * dy > 90 || dt > 800) return; // 拖曳相機不算點擊
+    const coarse = coarsePointer || isMobileLayout();
+    const maxMove = coarse ? 34 : 10;   // px：coarse pointer 放寬 tap 容錯
+    const maxTime = coarse ? 1100 : 800; // ms
+    if (dx * dx + dy * dy > maxMove * maxMove || dt > maxTime) return; // 拖曳相機不算點擊
     const hit = pickAt(e.clientX, e.clientY);
+    // 已選取棋子時，若點在「可走／可攻擊」的高亮節點上 → 優先視為節點操作。
+    // （手機放大 hit 筒後，相鄰目標格常落在選中棋子的 hit 筒內）
+    const targetNode = hit.nodeId != null && highlightPriorityIds.has(hit.nodeId);
+    if (selectedUid != null && targetNode) {
+      nodePickCb?.(hit.nodeId);
+      return;
+    }
     if (hit.pieceUid != null) {
       audio.play('select');
       piecePickCb?.(hit.pieceUid);
@@ -811,12 +921,20 @@ export function createView(container, options = {}) {
     highlightNodes(nodeIds, kind = 'move') {
       const ids = Array.isArray(nodeIds) ? nodeIds : [];
       highlightKind = kind;
-      const positions = ids.filter((id) => NODE_MAP[id] != null).map((id) => board.nodeWorld(id));
-      fx.highlightNodes(positions, kind);
+      const valid = ids.filter((id) => NODE_MAP[id] != null);
+      // 只有「操作目標」類的高亮才優先於棋子 hit 判定；
+      // intel/danger 只是情報提示，點棋子仍應選棋子。
+      // 累積 union：main 會分兩次呼叫 move / attack 高亮，兩者都要可點。
+      if (kind !== 'danger' && kind !== 'intel') {
+        for (const id of valid) highlightPriorityIds.add(id);
+      }
+      const positions = valid.map((id) => board.nodeWorld(id));
+      fx.addHighlights(positions, kind);
     },
 
     clearHighlights() {
       highlightKind = null;
+      highlightPriorityIds = new Set();
       fx.clearHighlights();
     },
 
@@ -846,6 +964,7 @@ export function createView(container, options = {}) {
         ...(zones.airports || []),
       ])).filter((id) => !placed.has(id));
       highlightKind = 'deploy';
+      highlightPriorityIds = new Set();
       fx.highlightNodes(ids.map((id) => board.nodeWorld(id)), 'deploy');
     },
 
@@ -863,6 +982,77 @@ export function createView(container, options = {}) {
     /** 3D 浮動橫幅（text, ms, { sub, color, size }) */
     showBanner(text, ms, opts) {
       return fx.banner(text, ms ?? 1600, opts || {});
+    },
+
+    /**
+     * 設定 UI 佔用的安全區（CSS px），並在 autoFrame 時立即重新取景。
+     * 例：view.setSafeInsets({ top: 56, bottom: 88, left: 8, right: 8 })
+     * 傳入 null 可恢復預設（桌面=HUD 邊距；手機=少量呼吸空間）。
+     */
+    setSafeInsets(insets) {
+      if (!insets) {
+        safeInsets = null;
+        insetsExplicit = false;
+      } else {
+        safeInsets = {
+          top: Math.max(0, Number(insets.top) || 0),
+          right: Math.max(0, Number(insets.right) || 0),
+          bottom: Math.max(0, Number(insets.bottom) || 0),
+          left: Math.max(0, Number(insets.left) || 0),
+        };
+        insetsExplicit = true;
+      }
+      if (autoFrame) applyPerspective(perspective, { animate: false });
+      return effectiveInsets(
+        Math.max(1, container.clientWidth || 1),
+        Math.max(1, container.clientHeight || 1)
+      );
+    },
+
+    get safeInsets() {
+      return effectiveInsets(
+        Math.max(1, container.clientWidth || 1),
+        Math.max(1, container.clientHeight || 1)
+      );
+    },
+
+    /** 依目前 safeInsets 重新取景（保留方向） */
+    reframe(opts = {}) {
+      autoFrame = true;
+      return applyPerspective(perspective, { animate: !!opts.animate });
+    },
+
+    /**
+     * 縮放：factor > 1 拉遠、< 1 拉近（夾在最佳取景距離的合理範圍內）。
+     * 回傳新的相機距離。
+     */
+    zoomBy(factor) {
+      const f = Number(factor) || 1;
+      const target = stage.controls.target.clone();
+      const dir = stage.camera.position.clone().sub(target);
+      const dist = dir.length();
+      const fit = computeFitDistance(perspective);
+      const minD = Math.max(4.5, fit * 0.38);
+      const maxD = Math.max(fit * 2.6, 48);
+      const next = Math.min(maxD, Math.max(minD, dist * f));
+      dir.normalize().multiplyScalar(next);
+      stage.camera.position.copy(target).add(dir);
+      stage.controls.minDistance = minD;
+      stage.controls.maxDistance = maxD;
+      stage.controls.update();
+      autoFrame = false;
+      return next;
+    },
+
+    /** 回到目前方向 + safeInsets 的最佳取景 */
+    resetView() {
+      autoFrame = true;
+      return applyPerspective(perspective, { animate: true });
+    },
+
+    /** 是否為觸控裝置（coarse pointer；窄版面另以 isMobileLayout 內部判斷） */
+    get isCoarsePointer() {
+      return coarsePointer;
     },
 
     /** 相機聚焦某節點 */
@@ -938,12 +1128,11 @@ export function createView(container, options = {}) {
         fx.setLowQuality(true);
         board.setQuality(0);
       } else if (level === 'medium') {
-        // 中等：保留 Bloom 光暈、關閉陰影（軟體渲染截圖用）
-        stage.setBloomEnabled(true);
-        stage.setBloom(0.5, 0.68, 0.86);
+        // 手機建議畫質：關 Bloom 與陰影、像素比上限 1.25（≤1.5），保留 PBR 光照
+        stage.setBloomEnabled(false);
         stage.setShadowsEnabled(false);
-        stage.setPixelRatio(0.85);
-        stage.setExposure(1.0);
+        stage.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
+        stage.setExposure(1.02);
         fx.setLowQuality(false);
         board.setQuality(1);
       } else {
@@ -996,6 +1185,8 @@ export function createView(container, options = {}) {
       stage.renderer.domElement.removeEventListener('pointerup', onPointerUp);
       stage.renderer.domElement.removeEventListener('pointermove', onPointerMove);
       stage.renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
+      if (coarseMedia?.removeEventListener) coarseMedia.removeEventListener('change', onCoarseChange);
+      window.removeEventListener('orientationchange', onOrientationChange);
       fx.dispose();
       factory.dispose();
       board.dispose();

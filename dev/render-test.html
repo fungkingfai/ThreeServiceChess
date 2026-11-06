@@ -78,6 +78,8 @@
     const container = document.getElementById('canvas-container');
     const view = createView(container, { board: BOARD, pieces: PIECES });
     window.__view = view;
+    window.__BOARD = BOARD;
+    window.__PIECES = PIECES;
 
     // ?lowfx=1 / ?q=medium：無頭軟體渲染用的畫質模式
     if (params.get('lowfx') === '1') view.setQuality('low');

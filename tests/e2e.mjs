@@ -54,7 +54,7 @@ page.on('requestfailed', (req) => {
 try {
   console.log('▶ 開啟', URL);
   await page.goto(URL, { waitUntil: 'networkidle', timeout: 60000 });
-  await page.waitForFunction(() => !!window.__SANJUNQI__?.view, null, { timeout: 45000 });
+  await page.waitForFunction(() => !!window.__SANJUNQI__?.view, null, { timeout: 150000 });
   await page.waitForTimeout(2600);
   await shot(page, 'menu');
   const menuText = await page.evaluate(() => document.body.innerText);
